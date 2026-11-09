@@ -13,11 +13,16 @@ export class ErroGravador extends Error {
   }
 }
 
-export function criarGravador({ stream, armazem, idGravacao, fatiaMs = 5000 }) {
+// aoFalhar: chamado se o MediaRecorder der erro no meio (codificador). Sem isso a gravacao seguia
+// "gravando" com o REC aceso e saia truncada sem aviso (revisao de 09/11/2026).
+export function criarGravador({ stream, armazem, idGravacao, fatiaMs = 5000, aoFalhar = null }) {
   if (!MediaRecorder.isTypeSupported(FORMATO_GRAVACAO)) {
     throw new ErroGravador('formato', 'Este Chrome nao grava ' + FORMATO_GRAVACAO);
   }
   const gravador = new MediaRecorder(stream, { mimeType: FORMATO_GRAVACAO, audioBitsPerSecond: BITS_POR_SEGUNDO });
+  gravador.onerror = (evento) => {
+    if (aoFalhar) aoFalhar(evento.error || evento);
+  };
   const memoria = [];
   let seq = 0;
   // Fila das gravacoes no armazem: o parar() so termina depois que a ultima fatia entrou, para que

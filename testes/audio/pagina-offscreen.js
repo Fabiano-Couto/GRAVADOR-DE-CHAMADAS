@@ -51,10 +51,10 @@ function enviar(msg) {
 const ctxFontes = new AudioContext({ sampleRate: 48000 });
 let ultimaAba = null;
 let ultimoMic = null;
-const roteiro = { fecharAbaDuranteMic: false, falharMic: null };
-function fluxoDeTom(frequencia) {
+const roteiro = { fecharAbaDuranteMic: false, falharMic: null, micMudo: false, abaMuda: false };
+function fluxoDeTom(frequencia, mudo = false) {
   const oscilador = new OscillatorNode(ctxFontes, { frequency: frequencia });
-  const volume = new GainNode(ctxFontes, { gain: 0.3 });
+  const volume = new GainNode(ctxFontes, { gain: mudo ? 0 : 0.3 });
   const destino = new MediaStreamAudioDestinationNode(ctxFontes);
   oscilador.connect(volume).connect(destino);
   oscilador.start();
@@ -68,13 +68,23 @@ function fecharAba() {
 navigator.mediaDevices.getUserMedia = async (pedido) => {
   await ctxFontes.resume();
   if (pedido && pedido.audio && pedido.audio.mandatory && pedido.audio.mandatory.chromeMediaSource === 'tab') {
-    ultimaAba = fluxoDeTom(1000);
+    ultimaAba = fluxoDeTom(1000, roteiro.abaMuda);
     return ultimaAba;
   }
   if (roteiro.falharMic) throw new DOMException('microfone (falso)', roteiro.falharMic);
   if (roteiro.fecharAbaDuranteMic) fecharAba();
-  ultimoMic = fluxoDeTom(440);
+  ultimoMic = fluxoDeTom(440, roteiro.micMudo);
   return ultimoMic;
+};
+
+// ---------- MediaRecorder: guarda o ultimo e falha sob encomenda ----------
+let ultimoRecorder = null;
+const falhasRecorder = { start: false };
+const startOriginal = MediaRecorder.prototype.start;
+MediaRecorder.prototype.start = function (...args) {
+  if (falhasRecorder.start) throw new DOMException('start falso', 'InvalidStateError');
+  ultimoRecorder = this;
+  return startOriginal.apply(this, args);
 };
 // Microfone e captura da aba fechados de verdade (achado da revisao de seguranca de 09/11/2026:
 // nada conferia isso depois do Parar).
@@ -85,10 +95,14 @@ const trilhas = () => ({
 navigator.permissions.query = async () => ({ state: 'granted' });
 
 // ---------- falhas do IndexedDB sob encomenda ----------
-const falhasIdb = { putGravacoes: false, deleteTudo: false };
+const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false };
 const putOriginal = IDBObjectStore.prototype.put;
 IDBObjectStore.prototype.put = function (...args) {
   if (falhasIdb.putGravacoes && this.name === 'gravacoes') throw new DOMException('falha falsa', 'UnknownError');
+  if (falhasIdb.fecharAbaAoRegistrar && this.name === 'gravacoes') {
+    falhasIdb.fecharAbaAoRegistrar = false;
+    fecharAba(); // a aba fecha exatamente enquanto a gravacao e registrada
+  }
   return putOriginal.apply(this, args);
 };
 const deleteOriginal = IDBObjectStore.prototype.delete;
@@ -97,7 +111,8 @@ IDBObjectStore.prototype.delete = function (...args) {
   return deleteOriginal.apply(this, args);
 };
 
-await import('/extensao/offscreen.js');
+const offscreen = await import('/extensao/offscreen.js');
+const AJUSTES_DE_PRODUCAO = { ...offscreen.AJUSTES };
 
 // ---------- ajudantes ----------
 const PEDIDO = { tipo: 'iniciar', streamId: 'id-falso', tabId: 7, origem: 'WhatsApp', nome: 'Gravacoes de Chamadas/a.m4a' };
@@ -220,13 +235,139 @@ async function armazemFalhandoAoParar() {
   if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
   falhasIdb.deleteTudo = false;
   const fim = resumoEstado(await enviar({ tipo: 'estado' }));
+  const copiaQueSobrou = await gravacoesNoArmazem();
   // limpa o que a falha deixou para tras
   if (recebido) {
     const banco = await abrirArmazem();
     await banco.apagarGravacao(recebido.idGravacao);
     banco.fechar();
   }
-  return { parar, recebeuArquivo: Boolean(recebido), fim };
+  return { parar, recebeuArquivo: Boolean(recebido), fim, copiaQueSobrou };
+}
+
+// Avisos durante a gravacao, com os tempos encurtados: com som nos dois lados, nenhum aviso; com
+// os dois mudos, "microfone-mudo" e "aba-muda" (a chamada pode estar noutra janela).
+async function avisos() {
+  swQueSalva();
+  Object.assign(offscreen.AJUSTES, { silencioVoceMs: 800, silencioClienteMs: 1500, vigiaMs: 100 });
+  try {
+    arquivoRecebido = null;
+    await enviar(PEDIDO);
+    await espera(2500);
+    const comSom = (await enviar({ tipo: 'estado' })).alertas;
+    await enviar({ tipo: 'parar' });
+    let r = await esperarArquivo();
+    await enviar({ tipo: 'salvo', idGravacao: r.idGravacao });
+
+    roteiro.micMudo = true;
+    roteiro.abaMuda = true;
+    arquivoRecebido = null;
+    paraSw = [];
+    await enviar(PEDIDO);
+    await espera(2500);
+    const mudos = (await enviar({ tipo: 'estado' })).alertas;
+    const avisados = paraSw.filter((m) => m.tipo === 'estado-mudou' && m.estado === 'gravando').map((m) => m.alertas);
+    await enviar({ tipo: 'parar' });
+    r = await esperarArquivo();
+    await enviar({ tipo: 'salvo', idGravacao: r.idGravacao });
+    return { comSom, mudos, ultimoAvisado: avisados[avisados.length - 1] };
+  } finally {
+    roteiro.micMudo = false;
+    roteiro.abaMuda = false;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
+}
+
+// IndexedDB recusando registrar a gravacao: grava mesmo assim (so na memoria) e avisa "sem-copia".
+async function semCopiaDeSeguranca() {
+  swQueSalva();
+  arquivoRecebido = null;
+  falhasIdb.putGravacoes = true;
+  const inicio = await enviar(PEDIDO);
+  falhasIdb.putGravacoes = false;
+  const durante = resumoEstado(await enviar({ tipo: 'estado' }));
+  const alertas = (await enviar({ tipo: 'estado' })).alertas;
+  await espera(1500);
+  const parar = await enviar({ tipo: 'parar' });
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return {
+    inicio,
+    estadoDurante: durante.estado,
+    alertas,
+    parar,
+    bytes: recebido ? recebido.blob.size : 0,
+    fim: resumoEstado(await enviar({ tipo: 'estado' })),
+    gravacoes: await gravacoesNoArmazem(),
+  };
+}
+
+// Erro do MediaRecorder no meio: para sozinho, entrega o que ha e deixa aviso pendente.
+async function gravadorComErro() {
+  swQueSalva();
+  arquivoRecebido = null;
+  paraSw = [];
+  await enviar(PEDIDO);
+  await espera(1500);
+  ultimoRecorder.dispatchEvent(new Event('error'));
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return {
+    recebeuArquivo: Boolean(recebido),
+    avisos: paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo),
+    fim: resumoEstado(await enviar({ tipo: 'estado' })),
+  };
+}
+
+// Recuperar gravacao interrompida e o salvamento falhar: continua "gravando" (o nome segue com
+// _recuperada na proxima tentativa).
+async function recuperarInterrompidaQueFalha() {
+  const banco = await abrirArmazem();
+  await banco.criarGravacao({ id: 'interrompida', nome: 'Gravacoes de Chamadas/b.m4a', origem: 'Meet', inicio: 3, situacao: 'gravando' });
+  await banco.guardarPedaco('interrompida', 0, new Blob(['pedaco']));
+  banco.fechar();
+  respostaSw = async () => ({ ok: false, motivo: 'salvar' });
+  const primeira = await enviar({ tipo: 'recuperar', idGravacao: 'interrompida' });
+  const depoisDaFalha = await gravacoesNoArmazem();
+  swQueSalva();
+  arquivoRecebido = null;
+  const segunda = await enviar({ tipo: 'recuperar', idGravacao: 'interrompida' });
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: 'interrompida' });
+  return { primeira, depoisDaFalha, segunda, nome: recebido && recebido.nome, gravacoesDepois: await gravacoesNoArmazem() };
+}
+
+// A aba fecha exatamente enquanto a gravacao e registrada (ultimo instante do inicio): salva o que houver.
+async function abaFechadaNoUltimoInstante() {
+  swQueSalva();
+  arquivoRecebido = null;
+  falhasIdb.fecharAbaAoRegistrar = true;
+  const inicio = await enviar(PEDIDO);
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return { inicio, recebeuArquivo: Boolean(recebido), fim: resumoEstado(await enviar({ tipo: 'estado' })), gravacoes: await gravacoesNoArmazem() };
+}
+
+// Falha depois de registrar a gravacao (o gravador nao liga): nao sobra registro no armazem.
+async function falhaDepoisDeRegistrar() {
+  swQueSalva();
+  falhasRecorder.start = true;
+  const inicio = await enviar(PEDIDO);
+  falhasRecorder.start = false;
+  await espera(300);
+  return { inicio, fim: resumoEstado(await enviar({ tipo: 'estado' })), gravacoes: await gravacoesNoArmazem() };
+}
+
+// Parar pedido duas vezes ao mesmo tempo (atalho + clique): um salva, o outro manda aguardar.
+async function pararDuplo() {
+  swQueSalva();
+  arquivoRecebido = null;
+  await enviar(PEDIDO);
+  await espera(1200);
+  const respostas = await Promise.all([enviar({ tipo: 'parar' }), enviar({ tipo: 'parar' })]);
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return { respostas, fim: resumoEstado(await enviar({ tipo: 'estado' })) };
 }
 
 async function swRecusaEDepoisRecupera() {
@@ -268,6 +409,13 @@ window.rodarCenarios = async () => ({
   swRecusaEDepoisRecupera: await swRecusaEDepoisRecupera(),
   conclusaoDeGravacaoDesconhecida: await conclusaoDeGravacaoDesconhecida(),
   politicaBloqueiaConexao: await politicaBloqueiaConexao(),
+  avisos: await avisos(),
+  semCopiaDeSeguranca: await semCopiaDeSeguranca(),
+  gravadorComErro: await gravadorComErro(),
+  recuperarInterrompidaQueFalha: await recuperarInterrompidaQueFalha(),
+  abaFechadaNoUltimoInstante: await abaFechadaNoUltimoInstante(),
+  falhaDepoisDeRegistrar: await falhaDepoisDeRegistrar(),
+  pararDuplo: await pararDuplo(),
 });
 
 window.paginaPronta = true;

@@ -81,8 +81,10 @@ test('recuperar: lista as gravacoes que sobraram, mais nova primeiro, sem as ocu
     { id: 'b', inicio: 3000, situacao: 'pendente' },
     { id: 'c', inicio: 2000, situacao: 'gravando' },
     { id: 'd', inicio: 4000, situacao: 'salvando' },
+    { id: 'e', inicio: 5000, situacao: 'salva' },
   ];
-  // c gravando agora, d sendo salva agora: nenhuma das duas aparece
+  // c gravando agora, d sendo salva agora: nenhuma das duas aparece; e ja foi salva (so a copia
+  // nao foi apagada): nunca aparece
   assert.deepEqual(gravacoesParaRecuperar(lista, ['c', 'd']).map((g) => g.id), ['b', 'a']);
   assert.deepEqual(gravacoesParaRecuperar(lista, []).map((g) => g.id), ['d', 'b', 'c', 'a']);
   assert.deepEqual(gravacoesParaRecuperar([], []), []);

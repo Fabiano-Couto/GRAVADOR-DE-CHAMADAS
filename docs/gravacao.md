@@ -74,23 +74,45 @@ Perda máxima num travamento: **cerca de 10 s** — o Chrome entrega a 1ª fatia
 MP4 e o primeiro áudio só na 2ª (medido em 09/11/2026: 667 bytes na 1ª fatia), e às vezes junta duas
 fatias numa.
 
-### Aviso de microfone mudo (lib/silencio.js)
+### Avisos durante a gravação (lib/silencio.js, lib/mensagens.js)
 
-Silêncio **absoluto** no canal do microfone (pico abaixo de 0,00001) por 10 s → ícone com `!` em
-âmbar e aviso na janelinha. Pausa na conversa tem ruído de sala e não dispara. Só o microfone é
-vigiado: o canal da aba fica mudo de verdade quando o cliente está calado (alarme falso). Decidido
-na implementação (09/11/2026) — o plano falava em "um canal"; registrado no registro do trabalho.
+A gravação continua; o ícone vira `!` âmbar e a janelinha mostra o texto de cada aviso
+(`alertas` no resumo do offscreen). Tempos em `AJUSTES` no offscreen.js (o teste encurta).
+
+| Aviso | Quando | Por quê |
+|---|---|---|
+| `microfone-mudo` | silêncio **absoluto** (pico < 0,00001) no microfone por 10 s | microfone mudo no Windows, outro dispositivo. Pausa na conversa tem ruído de sala e não dispara |
+| `aba-muda` | silêncio absoluto no canal da aba por 30 s | **no WhatsApp Web a chamada pode abrir numa janela separada**: o som do cliente toca lá e a aba capturada fica muda. A mensagem manda usar o atalho com a janela da chamada em foco. Janela maior que a do microfone porque o cliente calado ou chamada ainda não atendida também emudecem a aba (revisão de 09/11/2026; antes só o microfone era vigiado) |
+| `sem-copia` | a cópia de segurança (IndexedDB) não abriu, não registrou ou falhou numa fatia | grava só na memória: salva ao parar, mas não recupera se o Chrome fechar no meio. Antes, IndexedDB com problema impedia gravar (revisão de 09/11/2026) |
+
+### Avisos pendentes (aconteceram sem ninguém olhando)
+
+Salvamento que falhou (download interrompido, download recusado) e gravador que parou sozinho por
+erro do Chrome deixam `pendente` no `chrome.storage.session`: o ícone fica com `!` até a janelinha
+ser aberta, que mostra o texto e limpa (`pendente-visto`). Caso típico: o usuário fecha a aba no fim
+da chamada, a gravação para sozinha e o download falha — antes, nada avisava.
+
+### Erro do gravador no meio
+
+`MediaRecorder` com erro (codificador) → o offscreen para, entrega o que foi gravado até ali e deixa o
+aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía truncado sem aviso.
 
 ### Ícone e janelinha
 
-- Ícone: `REC` vermelho gravando; `!` âmbar com microfone mudo; `...` iniciando/salvando; `X` por 5 s
-  quando o atalho é recusado (a dica do ícone diz o motivo).
+- Ícone (regra em lib/icone.js, testada): `REC` vermelho gravando; `!` âmbar gravando com aviso, ou
+  parado com aviso pendente; `...` iniciando/salvando; `X` por 5 s quando o atalho é recusado (a dica
+  do ícone diz o motivo).
 - Janelinha ([popup.js](../extensao/popup.js)): situação, cronômetro, medidores (−60 dB a 0 dB),
   botão Gravar/Parar, gravações não salvas, última gravação ("mostrar" abre a pasta com o arquivo
   selecionado), atalho atual, "Abrir Downloads". Pergunta a situação **direto ao offscreen** a cada
-  250 ms (sem offscreen, ninguém responde = parado), para não acordar o service worker. Diz
-  "Salvando..." ao parar e "Gravação salva: nome" só quando o download **termina** (o service worker
-  grava `ultimas` nessa hora); download interrompido mostra o erro e recarrega a lista.
+  250 ms (sem offscreen, ninguém responde = parado) — sem o salto pelo service worker; ele ainda
+  recebe a mensagem (toda `runtime.sendMessage` chega a todos os ouvintes) e devolve `false` na hora.
+  Diz "Salvando..." ao parar e "Gravação salva: nome" só quando o download **termina** (o service
+  worker grava `ultimas` nessa hora; a marca de espera é ligada **antes** de pedir, porque arquivo
+  pequeno pode terminar antes da resposta). Download **nosso** interrompido (endereço blob da própria
+  extensão) mostra o erro e recarrega a lista. Ao abrir, mostra e limpa o aviso pendente.
+- Página do microfone: se já estiver aberta, é trazida para a frente (`runtime.getContexts`), em vez
+  de abrir mais uma aba a cada clique.
 - Mensagens ao usuário: lib/mensagens.js (todo motivo usado no código tem texto — guarda).
 
 ## Mapa de arquivos
@@ -108,7 +130,8 @@ na implementação (09/11/2026) — o plano falava em "um canal"; registrado no 
 | lib/mixer.js | grafo de áudio (canais, alto-falante, medidores) |
 | lib/gravador.js | MediaRecorder em fatias: memória (arquivo final) + armazém (cópia de segurança) |
 | lib/armazem.js | IndexedDB: gravações e pedaços |
-| lib/downloads.js | ligação "endereço em download → gravação", uma chave por download |
+| lib/downloads.js | ligação "endereço em download → gravação", uma chave por download; `arquivoAceito` |
+| lib/icone.js | aparência do ícone (selo, cor, dica) pela situação e pelo aviso pendente |
 | lib/silencio.js | aviso de microfone mudo |
 | lib/mensagens.js | texto de cada motivo de recusa/erro |
 | icones/ | PNG 16/48/128, gerados por [gerar-icones.js](../ferramentas/gerar-icones.js) |
@@ -140,6 +163,18 @@ na implementação (09/11/2026) — o plano falava em "um canal"; registrado no 
   lento é o que pega.
 - **Evento 'ended' da aba** tem de ser escutado logo depois da captura: a aba pode fechar durante o
   resto do início (microfone, armazém) e o evento se perde.
+- **Chamada do WhatsApp Web em janela separada** (a confirmar na conferência local): o ícone da
+  extensão não aparece numa janela sem barra de ferramentas; o **atalho** grava a aba ativa da janela
+  em foco. Clicar o ícone na aba principal grava uma aba muda → aviso `aba-muda` em 30 s.
+- **Saída de som** (suspeita da revisão, a confirmar no Meet): o som da aba é devolvido no
+  dispositivo **padrão** do Windows, não necessariamente no que a página da chamada usava (o Meet
+  deixa escolher; o Windows separa "padrão" de "comunicação"). Se o cliente pular do fone para a
+  caixa ao começar a gravar, a voz dele entra no microfone. A extensão não sabe qual saída a página usa.
+- **Fone Bluetooth / microfone com porta de ruído** (suspeita da revisão): pode entregar zeros
+  digitais quando o usuário não fala → `microfone-mudo` falso depois de 10 s ouvindo o cliente.
+  Conferir com o fone de verdade do usuário.
+- **`tabs.query` com filtro de endereço** é ignorado sem a permissão `tabs` (devolve todas as abas):
+  para achar páginas da própria extensão, usar `runtime.getContexts`.
 - **O identificador da captura vence em segundos** e serve uma vez: é o primeiro a ser usado no
   offscreen.
 - **Endereço blob** só vale enquanto o offscreen estiver aberto: o offscreen não é fechado.
@@ -173,8 +208,9 @@ na implementação (09/11/2026) — o plano falava em "um canal"; registrado no 
 | [mensagens.test.js](../testes/unidade/mensagens.test.js) | textos ao usuário |
 | [downloads.test.js](../testes/unidade/downloads.test.js) | dois salvamentos ao mesmo tempo não se atropelam |
 | [audio.test.js](../testes/audio/audio.test.js) | Chrome real + ffmpeg: AAC estéreo; esquerdo só voz, direito só cliente; alto-falante toca o cliente e nunca a voz; medidores; armazém lento sem órfão; armazém falho não estraga o arquivo; recuperação |
-| [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; aba fechada no início e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida |
-| (sem teste automático) | service-worker.js e popup.js usam APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): conferidos na conferência local guiada |
+| [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; microfone e aba fechados depois do Parar; endereço blob liberado; aba fechada no início, no último instante e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida; avisos de microfone e aba mudos; gravação sem cópia de segurança; erro do gravador; recuperação que falha mantém `_recuperada`; Parar duplo |
+| [icone.test.js](../testes/unidade/icone.test.js) | selo, cor e dica do ícone; aviso pendente persiste |
+| (sem teste automático) | service-worker.js e popup.js usam APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): a lógica que dá para separar foi para lib/ (estado, nomes, downloads, icone, mensagens) e é testada; o resto é conferido na conferência local guiada |
 | [guardas.test.js](../testes/guardas/guardas.test.js) | política de segurança exata no manifest; alarme de rede/código de fora em todo arquivo da extensão; permissões exatas; áudio fora do git; sem `_`; motivos com texto; docs sem caminho morto |
 | [instalar.test.js](../testes/unidade/instalar.test.js) | instalador: cópia conferida, recusa apagar pasta alheia, recusa destino no Drive |
 | offscreen.test.js (política) | as páginas de teste rodam sob a mesma política do manifest: a gravação funciona e o Chrome bloqueia conexão de verdade |

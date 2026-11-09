@@ -6,11 +6,8 @@ import { decidirAlternar, gravacoesParaRecuperar } from './lib/estado.js';
 import { abrirArmazem } from './lib/armazem.js';
 import { textoDoMotivo } from './lib/mensagens.js';
 import { anotarSalvamento, retirarSalvamento, arquivoAceito } from './lib/downloads.js';
+import { aparenciaDoIcone, CORES } from './lib/icone.js';
 
-const COR_GRAVANDO = '#D93025';
-const COR_ALERTA = '#E37400';
-const COR_NEUTRA = '#5F6368';
-const TITULO = 'Gravador de Chamadas';
 const MAXIMO_ULTIMAS = 5;
 
 // ---------- eventos ----------
@@ -55,10 +52,17 @@ async function tratarMensagem(msg) {
       await garantirOffscreen();
       return perguntarOffscreen('descartar', { idGravacao: msg.idGravacao });
     case 'estado-mudou':
-      atualizarIcone(msg);
+      await atualizarIcone(msg);
       return { ok: true };
     case 'arquivo-pronto':
       return salvarArquivo(msg);
+    case 'aviso':
+      await marcarPendente(msg.codigo);
+      return { ok: true };
+    case 'pendente-visto':
+      await chrome.storage.session.remove('pendente');
+      await atualizarIcone(await estadoAtual());
+      return { ok: true };
     default:
       return { ok: false, motivo: 'desconhecido' };
   }
@@ -107,7 +111,7 @@ async function alternar(aba) {
 }
 
 async function estadoAtual() {
-  if (!(await existeOffscreen())) return { ok: true, estado: 'parado', atual: null, niveis: null, alerta: false };
+  if (!(await existeOffscreen())) return { ok: true, estado: 'parado', atual: null, niveis: null, alertas: [], emEntrega: [] };
   return perguntarOffscreen('estado');
 }
 
@@ -120,7 +124,10 @@ async function recuperaveis() {
   }
   const banco = await abrirArmazem();
   try {
-    const lista = gravacoesParaRecuperar(await banco.listarGravacoes(), ocupadas);
+    const todas = await banco.listarGravacoes();
+    // 'salva' = download concluido, so a copia nao tinha sido apagada: tenta apagar de novo agora.
+    for (const g of todas.filter((g) => g.situacao === 'salva')) await banco.apagarGravacao(g.id).catch(() => {});
+    const lista = gravacoesParaRecuperar(todas, ocupadas);
     return { ok: true, lista: lista.map(({ id, nome, origem, inicio, situacao }) => ({ id, nome, origem, inicio, situacao })) };
   } finally {
     banco.fechar();
@@ -135,11 +142,12 @@ async function salvarArquivo({ idGravacao, url, nome }) {
   }
   await anotarSalvamento(chrome.storage.session, url, { idGravacao, nome });
   try {
-    await chrome.downloads.download(opcoesDownload(url, nome));
-    return { ok: true, nome };
+    const downloadId = await chrome.downloads.download(opcoesDownload(url, nome));
+    return { ok: true, nome, downloadId };
   } catch (e) {
     // O offscreen recebe a resposta de falha e conclui como 'falhou-salvar' (gravacao fica guardada).
     await retirarSalvamento(chrome.storage.session, url);
+    await marcarPendente('nao-salva');
     return { ok: false, motivo: 'salvar', detalhe: String(e?.message || e) };
   }
 }
@@ -155,6 +163,9 @@ async function concluirDownload(downloadId, fim) {
     await perguntarOffscreen('salvo', { idGravacao: info.idGravacao });
   } else {
     await perguntarOffscreen('falhou-salvar', { idGravacao: info.idGravacao });
+    // Pode ter acontecido com a janelinha fechada (aba fechada no fim da chamada): o icone fica
+    // com "!" ate ela ser aberta (revisao de 09/11/2026).
+    await marcarPendente('nao-salva');
   }
 }
 
@@ -194,29 +205,25 @@ function perguntarOffscreen(tipo, dados = {}) {
 
 // ---------- icone ----------
 
-// Recebe tanto o aviso 'estado-mudou' (origem no topo) quanto o resumo do offscreen (origem em
-// atual.origem) — achado da revisao de 09/11/2026: a dica mostrava "Gravando undefined".
-function atualizarIcone(r) {
-  const { estado, alerta } = r;
-  const origem = r.origem || (r.atual && r.atual.origem) || 'a aba';
-  if (estado === 'gravando') {
-    chrome.action.setBadgeText({ text: alerta ? '!' : 'REC' });
-    chrome.action.setBadgeBackgroundColor({ color: alerta ? COR_ALERTA : COR_GRAVANDO });
-    chrome.action.setTitle({ title: alerta ? 'Gravando ' + origem + ': o microfone está sem som!' : 'Gravando ' + origem });
-  } else if (estado === 'iniciando' || estado === 'salvando') {
-    chrome.action.setBadgeText({ text: '...' });
-    chrome.action.setBadgeBackgroundColor({ color: COR_NEUTRA });
-    chrome.action.setTitle({ title: estado === 'salvando' ? 'Salvando a gravação' : 'Iniciando a gravação' });
-  } else {
-    chrome.action.setBadgeText({ text: '' });
-    chrome.action.setTitle({ title: TITULO });
-  }
+// Regra da aparencia em lib/icone.js (testada); aqui so aplica.
+async function atualizarIcone(r) {
+  const { pendente = null } = await chrome.storage.session.get('pendente');
+  const a = aparenciaDoIcone(r, pendente);
+  await chrome.action.setBadgeText({ text: a.texto });
+  await chrome.action.setBadgeBackgroundColor({ color: a.cor });
+  await chrome.action.setTitle({ title: a.titulo });
+}
+
+// Aviso que aconteceu sem ninguem olhando: fica no icone ate a janelinha ser aberta.
+async function marcarPendente(codigo) {
+  await chrome.storage.session.set({ pendente: codigo });
+  await atualizarIcone(await estadoAtual().catch(() => ({ estado: 'parado' })));
 }
 
 // Erro no atalho de teclado (sem janelinha aberta): marca o icone por 5 s e poe o motivo na dica.
 function avisarErroNoIcone(r) {
   chrome.action.setBadgeText({ text: 'X' });
-  chrome.action.setBadgeBackgroundColor({ color: COR_NEUTRA });
+  chrome.action.setBadgeBackgroundColor({ color: CORES.neutra });
   chrome.action.setTitle({ title: textoDoMotivo(r) });
   setTimeout(() => {
     estadoAtual()
@@ -225,6 +232,17 @@ function avisarErroNoIcone(r) {
   }, 5000);
 }
 
+// Reaproveita a aba da permissao se ja estiver aberta (revisao de 09/11/2026: cada clique sem
+// permissao abria mais uma aba).
+// (runtime.getContexts lista so paginas da PROPRIA extensao; tabs.query com filtro de endereco seria
+// ignorado sem a permissao "tabs" e devolveria todas as abas.)
 async function abrirPaginaPermissao() {
-  await chrome.tabs.create({ url: chrome.runtime.getURL('permissao.html') });
+  const endereco = chrome.runtime.getURL('permissao.html');
+  const abertas = await chrome.runtime.getContexts({ contextTypes: ['TAB'], documentUrls: [endereco] });
+  if (abertas.length) {
+    await chrome.tabs.update(abertas[0].tabId, { active: true });
+    await chrome.windows.update(abertas[0].windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url: endereco });
 }

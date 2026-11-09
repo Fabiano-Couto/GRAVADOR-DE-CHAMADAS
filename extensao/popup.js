@@ -1,11 +1,12 @@
 // Janelinha do icone: mostra a situacao, os medidores (Voce / Cliente), o botao Gravar/Parar e as
 // gravacoes nao salvas. Toda acao passa pelo service worker. Mapa: docs/gravacao.md.
 import { origemDaUrl, doisDigitos } from './lib/nomes.js';
-import { textoDoMotivo } from './lib/mensagens.js';
+import { textoDoMotivo, textoDoAlerta, textoDoPendente } from './lib/mensagens.js';
 
 const $ = (id) => document.getElementById(id);
 const pedirSw = (tipo, dados = {}) => chrome.runtime.sendMessage({ alvo: 'sw', tipo, ...dados });
-const PARADO = { ok: true, estado: 'parado', atual: null, niveis: null, alerta: false, emEntrega: [] };
+const PARADO = { ok: true, estado: 'parado', atual: null, niveis: null, alertas: [], emEntrega: [] };
+const nossoDownload = (url) => typeof url === 'string' && url.startsWith('blob:' + chrome.runtime.getURL(''));
 
 let abaAtual = null;
 let ocupado = false;
@@ -52,7 +53,7 @@ function desenhar(r) {
     $('nivel-cliente').style.width = largura(r.niveis?.cliente);
     botao.textContent = 'Parar e salvar';
     botao.disabled = ocupado;
-    if (r.alerta) mostrarAviso('Seu microfone está sem som há mais de 10 segundos. Confira se ele não está mudo no Windows.');
+    if (r.alertas && r.alertas.length) mostrarAviso(r.alertas.map(textoDoAlerta).join(' '));
     else if ($('aviso').dataset.fixo !== 'sim') mostrarAviso('');
   } else if (gravandoOutra) {
     texto.textContent = 'Gravando outra aba: ' + r.atual.origem;
@@ -72,8 +73,11 @@ function desenhar(r) {
   }
 }
 
-// Pergunta direto ao offscreen (sem acordar o service worker a cada 250 ms — achado da revisao de
-// 09/11/2026). Sem offscreen aberto ninguem responde: e porque nada esta gravando.
+// Pergunta direto ao offscreen: sem o salto pelo service worker (que antes reenviava a pergunta e
+// consultava runtime.getContexts a cada 250 ms). O service worker ainda RECEBE a mensagem (toda
+// runtime.sendMessage chega a todos os ouvintes da extensao) e devolve false na hora — correcao da
+// revisao de 09/11/2026, que apontou a premissa errada do comentario anterior.
+// Sem offscreen aberto ninguem responde: e porque nada esta gravando.
 async function atualizar() {
   let r;
   try {
@@ -90,19 +94,23 @@ async function aoClicar() {
   $('botao').disabled = true;
   const parando = ultimoEstado?.estado === 'gravando';
   $('aviso').dataset.fixo = '';
+  // Marca ANTES de pedir: um arquivo pequeno pode terminar de baixar antes da resposta voltar, e o
+  // "Gravação salva" se perdia (revisao de 09/11/2026).
+  if (parando) esperandoSalvar = true;
   try {
     const r = await pedirSw('alternar', { tabId: abaAtual.id });
     if (!r || !r.ok) {
+      esperandoSalvar = false;
       mostrarAviso(textoDoMotivo(r), r?.motivo !== 'microfone');
       $('aviso').dataset.fixo = 'sim';
     } else if (parando) {
-      esperandoSalvar = true;
-      mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
+      if (esperandoSalvar) mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
       $('aviso').dataset.fixo = 'sim';
     } else {
       mostrarAviso('');
     }
   } catch (e) {
+    esperandoSalvar = false;
     mostrarAviso(textoDoMotivo({ motivo: 'interno', detalhe: String(e?.message || e) }), true);
     $('aviso').dataset.fixo = 'sim';
   } finally {
@@ -149,11 +157,12 @@ async function carregarRecuperaveis() {
     salvar.addEventListener('click', async () => {
       salvar.disabled = true;
       descartar.disabled = true;
+      esperandoSalvar = true; // antes de pedir (mesma corrida do Parar)
       const resposta = await pedirSw('recuperar', { idGravacao: g.id }).catch((e) => ({ ok: false, motivo: 'interno', detalhe: String(e) }));
       if (resposta && resposta.ok) {
-        esperandoSalvar = true;
-        mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
+        if (esperandoSalvar) mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
       } else {
+        esperandoSalvar = false;
         mostrarAviso(textoDoMotivo(resposta), true);
       }
       $('aviso').dataset.fixo = 'sim';
@@ -224,14 +233,25 @@ async function iniciar() {
     }
     carregarRecuperaveis();
   });
-  // Download que falhou (disco cheio, antivirus): a gravacao volta para "nao salvas".
-  chrome.downloads.onChanged.addListener((delta) => {
+  // Download NOSSO que falhou (disco cheio, antivirus): a gravacao volta para "nao salvas". Download
+  // de outro site falhando nao conta (revisao de 09/11/2026).
+  chrome.downloads.onChanged.addListener(async (delta) => {
     if (delta.state?.current !== 'interrupted' || !esperandoSalvar) return;
+    const [item] = await chrome.downloads.search({ id: delta.id });
+    if (!item || !nossoDownload(item.url)) return;
     esperandoSalvar = false;
     mostrarAviso(textoDoMotivo({ motivo: 'salvar' }), true);
     $('aviso').dataset.fixo = 'sim';
     setTimeout(carregarRecuperaveis, 500);
   });
+  // Aviso que aconteceu com a janelinha fechada (salvamento falhou, gravador parou): mostra e limpa
+  // o "!" do icone.
+  const { pendente = null } = await chrome.storage.session.get('pendente');
+  if (pendente) {
+    mostrarAviso(textoDoPendente(pendente), true);
+    $('aviso').dataset.fixo = 'sim';
+    pedirSw('pendente-visto').catch(() => {});
+  }
   mostrarAtalho();
   mostrarUltima();
   carregarRecuperaveis();

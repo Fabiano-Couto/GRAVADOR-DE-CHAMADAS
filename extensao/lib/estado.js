@@ -54,6 +54,8 @@ export function decidirAlternar(estado, tabIdGravando, tabIdPedido) {
 // Gravacoes que sobraram no armazem (interrompidas ou que nao chegaram a ser salvas), mais nova
 // primeiro, sem as ocupadas agora: a que esta gravando e as que estao sendo salvas neste momento
 // (achado da revisao de 09/11/2026: a que estava sendo salva voltava na lista com botoes ativos).
+// Situacao 'salva' = o download terminou mas apagar a copia falhou: nao e "nao salva" (revisao de
+// 09/11/2026: aparecia na lista e "Salvar" gerava arquivo duplicado).
 export function gravacoesParaRecuperar(lista, idsOcupados) {
-  return lista.filter((g) => !idsOcupados.includes(g.id)).sort((a, b) => b.inicio - a.inicio);
+  return lista.filter((g) => !idsOcupados.includes(g.id) && g.situacao !== 'salva').sort((a, b) => b.inicio - a.inicio);
 }

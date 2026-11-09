@@ -136,3 +136,67 @@ test('offscreen: download recusado guarda a copia como pendente e ela pode ser s
 test('offscreen: salvo de gravacao desconhecida apaga a copia; falha marca pendente', opcoes, () => {
   assert.deepEqual(c.conclusaoDeGravacaoDesconhecida.depois, [{ id: 'antiga-falhou', situacao: 'pendente' }]);
 });
+
+// ---- achados da revisao de defeito (09/11/2026) ----
+
+test('offscreen: download concluido e copia que nao apagou fica marcada salva (nao volta como nao salva)', opcoes, () => {
+  const a = c.armazemFalhandoAoParar;
+  assert.equal(a.copiaQueSobrou.length, 1);
+  assert.equal(a.copiaQueSobrou[0].situacao, 'salva');
+});
+
+test('offscreen: com som nos dois lados nao ha aviso; com os dois mudos avisa microfone e aba', opcoes, () => {
+  const a = c.avisos;
+  assert.deepEqual(a.comSom, []);
+  assert.deepEqual([...a.mudos].sort(), ['aba-muda', 'microfone-mudo']);
+  assert.deepEqual([...a.ultimoAvisado].sort(), ['aba-muda', 'microfone-mudo']);
+});
+
+test('offscreen: sem copia de seguranca grava mesmo assim, avisa e entrega o arquivo', opcoes, () => {
+  const s = c.semCopiaDeSeguranca;
+  assert.equal(s.inicio.ok, true);
+  assert.equal(s.estadoDurante, 'gravando');
+  assert.deepEqual(s.alertas, ['sem-copia']);
+  assert.equal(s.parar.ok, true);
+  assert.ok(s.bytes > 1000, 'arquivo vazio: ' + s.bytes);
+  assert.equal(s.fim.estado, 'parado');
+  assert.deepEqual(s.gravacoes, []);
+});
+
+test('offscreen: erro do gravador no meio para sozinho, entrega o arquivo e deixa aviso pendente', opcoes, () => {
+  const g = c.gravadorComErro;
+  assert.equal(g.recebeuArquivo, true);
+  assert.deepEqual(g.avisos, ['gravador-parou']);
+  assert.equal(g.fim.estado, 'parado');
+});
+
+test('offscreen: recuperar interrompida que falha continua gravando e salva depois com _recuperada', opcoes, () => {
+  const r = c.recuperarInterrompidaQueFalha;
+  assert.equal(r.primeira.ok, false);
+  assert.deepEqual(r.depoisDaFalha, [{ id: 'interrompida', situacao: 'gravando' }]);
+  assert.equal(r.segunda.ok, true);
+  assert.equal(r.nome, 'Gravacoes de Chamadas/b_recuperada.m4a');
+  assert.deepEqual(r.gravacoesDepois, []);
+});
+
+test('offscreen: aba fechada no ultimo instante do inicio salva o que houver e volta para parado', opcoes, () => {
+  const a = c.abaFechadaNoUltimoInstante;
+  assert.equal(a.inicio.ok, true);
+  assert.equal(a.recebeuArquivo, true);
+  assert.equal(a.fim.estado, 'parado');
+  assert.deepEqual(a.gravacoes, []);
+});
+
+test('offscreen: falha depois de registrar a gravacao nao deixa sobra no armazem', opcoes, () => {
+  const f = c.falhaDepoisDeRegistrar;
+  assert.equal(f.inicio.ok, false);
+  assert.equal(f.inicio.motivo, 'interno');
+  assert.equal(f.fim.estado, 'parado');
+  assert.deepEqual(f.gravacoes, []);
+});
+
+test('offscreen: Parar duplo ao mesmo tempo salva uma vez e manda o outro aguardar', opcoes, () => {
+  const p = c.pararDuplo;
+  assert.deepEqual(p.respostas.map((r) => (r.ok ? 'ok' : r.motivo)).sort(), ['aguardar', 'ok']);
+  assert.equal(p.fim.estado, 'parado');
+});

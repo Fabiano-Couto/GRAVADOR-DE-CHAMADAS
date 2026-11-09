@@ -10,8 +10,11 @@ import { criarMaquina } from './lib/estado.js';
 import { criarDetectorSilencio } from './lib/silencio.js';
 import { nomeParaRecuperar } from './lib/nomes.js';
 
+// Tempos da vigia. Exportados para o teste encurtar (o valor de producao e este).
+export const AJUSTES = { silencioVoceMs: 10000, silencioClienteMs: 30000, vigiaMs: 500 };
+
 const maquina = criarMaquina();
-let sessao = null; // { id, meta, ctx, fluxos, mixer, gravador, detector, alerta, relogio }
+let sessao = null; // { id, meta, ctx, fluxos, mixer, gravador, detectores, alertas, semCopia, relogio }
 let armazemPromessa = null;
 const urls = new Map(); // idGravacao -> endereco blob entregue ao service worker
 const emEntrega = new Set(); // gravacoes sendo salvas agora (fora da lista de recuperaveis)
@@ -36,6 +39,8 @@ function avisarSw(tipo, dados = {}) {
   return chrome.runtime.sendMessage({ alvo: 'sw', tipo, ...dados });
 }
 
+const alertasAtuais = () => (sessao ? [...sessao.alertas] : []);
+
 function resumo() {
   return {
     ok: true,
@@ -44,15 +49,13 @@ function resumo() {
       ? { id: sessao.id, tabId: sessao.meta.tabId, origem: sessao.meta.origem, nome: sessao.meta.nome, inicio: sessao.meta.inicio }
       : null,
     niveis: sessao && maquina.estado === 'gravando' ? sessao.mixer.medir() : null,
-    alerta: sessao ? sessao.alerta : false,
+    alertas: alertasAtuais(),
     emEntrega: [...emEntrega],
   };
 }
 
 function avisarEstado() {
-  avisarSw('estado-mudou', { estado: maquina.estado, alerta: sessao ? sessao.alerta : false, origem: sessao ? sessao.meta.origem : null }).catch(
-    () => {},
-  );
+  avisarSw('estado-mudou', { estado: maquina.estado, alertas: alertasAtuais(), origem: sessao ? sessao.meta.origem : null }).catch(() => {});
 }
 
 async function tratar(msg) {
@@ -87,7 +90,9 @@ async function iniciar({ streamId, tabId, origem, nome }) {
   avisarEstado();
   const fluxos = [];
   let ctx = null;
-  let idCriado = null;
+  let registrado = false;
+  const id = crypto.randomUUID();
+  let banco = null;
   try {
     // 1) som da aba (o identificador vence em segundos: e o primeiro a ser usado)
     let aba;
@@ -101,13 +106,13 @@ async function iniciar({ streamId, tabId, origem, nome }) {
     }
     fluxos.push(aba);
     // Escuta o fim da captura (aba fechada) JA AGORA: se acontecer durante o resto do inicio, o
-    // evento nao se perde (achado da revisao de 09/11/2026).
+    // evento nao se perde (revisao de 09/11/2026).
     const trilhaAba = aba.getAudioTracks()[0];
     let abaEncerrada = !trilhaAba || trilhaAba.readyState === 'ended';
     if (trilhaAba) {
       trilhaAba.addEventListener('ended', () => {
         abaEncerrada = true;
-        if (maquina.estado === 'gravando' && sessao && sessao.id === idCriado) pararESalvar().catch(() => {});
+        if (maquina.estado === 'gravando' && sessao && sessao.id === id) pararESalvar().catch(() => {});
       });
     }
 
@@ -130,18 +135,50 @@ async function iniciar({ streamId, tabId, origem, nome }) {
       saidaMonitor: ctx.destination,
     });
 
-    // 4) gravador (criado antes de registrar: se o formato falhar, nao sobra registro vazio)
-    const id = crypto.randomUUID();
+    // 4) gravador. A copia de seguranca (armazem) NAO e pre-requisito: se ela falhar, grava so na
+    //    memoria e avisa (revisao de 09/11/2026: antes, IndexedDB com problema impedia gravar).
     const meta = { id, nome, origem, tabId, inicio: Date.now() };
-    const banco = await armazem();
-    const gravador = criarGravador({ stream: mixer.stream, armazem: banco, idGravacao: id });
+    try {
+      banco = await armazem();
+    } catch (e) {
+      console.error('Gravador: armazem indisponivel, gravando sem copia de seguranca', e);
+    }
+    let semCopia = !banco;
+    const copia = { guardarPedaco: (...args) => (semCopia ? Promise.resolve() : banco.guardarPedaco(...args)) };
+    const gravador = criarGravador({
+      stream: mixer.stream,
+      armazem: copia,
+      idGravacao: id,
+      aoFalhar: (erro) => gravadorFalhou(id, erro),
+    });
     if (abaEncerrada) throw new ErroGravador('captura-aba', 'a aba foi fechada antes de a gravacao comecar');
-    await banco.criarGravacao({ id, nome, origem, inicio: meta.inicio, situacao: 'gravando' });
-    idCriado = id;
+    if (!semCopia) {
+      try {
+        await banco.criarGravacao({ id, nome, origem, inicio: meta.inicio, situacao: 'gravando' });
+        registrado = true;
+      } catch (e) {
+        console.error('Gravador: nao registrou a copia de seguranca', e);
+        semCopia = true;
+      }
+    }
     gravador.iniciar();
 
-    sessao = { id, meta, ctx, fluxos, mixer, gravador, detector: criarDetectorSilencio(), alerta: false, relogio: null };
-    sessao.relogio = setInterval(vigiar, 500);
+    sessao = {
+      id,
+      meta,
+      ctx,
+      fluxos,
+      mixer,
+      gravador,
+      detectores: {
+        voce: criarDetectorSilencio({ duracaoMs: AJUSTES.silencioVoceMs }),
+        cliente: criarDetectorSilencio({ duracaoMs: AJUSTES.silencioClienteMs }),
+      },
+      alertas: new Set(semCopia ? ['sem-copia'] : []),
+      semCopia: () => semCopia,
+      relogio: null,
+    };
+    sessao.relogio = setInterval(vigiar, AJUSTES.vigiaMs);
     maquina.confirmarInicio();
     avisarEstado();
     if (abaEncerrada) pararESalvar().catch(() => {}); // fechou no ultimo instante: salva o que houver
@@ -149,7 +186,7 @@ async function iniciar({ streamId, tabId, origem, nome }) {
   } catch (e) {
     pararFluxos(fluxos);
     if (ctx) ctx.close().catch(() => {});
-    if (idCriado) armazem().then((b) => b.apagarGravacao(idCriado)).catch(() => {});
+    if (registrado) banco.apagarGravacao(id).catch(() => {});
     sessao = null;
     maquina.falharInicio();
     avisarEstado();
@@ -157,21 +194,37 @@ async function iniciar({ streamId, tabId, origem, nome }) {
   }
 }
 
-// A cada meio segundo: aviso de microfone mudo (silencio absoluto por 10 s).
+// A cada meio segundo: avisos de microfone mudo (10 s), de aba muda (30 s: a chamada pode estar
+// noutra janela) e de copia de seguranca falhando.
 function vigiar() {
   if (!sessao || maquina.estado !== 'gravando') return;
-  const mudou = sessao.detector.alimentar(sessao.mixer.medir().voce, Date.now());
-  if (mudou) {
-    sessao.alerta = mudou === 'alerta';
-    avisarEstado();
-  }
+  const agora = Date.now();
+  const niveis = sessao.mixer.medir();
+  const antes = [...sessao.alertas].sort().join();
+  const aplicar = (codigo, mudanca) => {
+    if (mudanca === 'alerta') sessao.alertas.add(codigo);
+    if (mudanca === 'normal') sessao.alertas.delete(codigo);
+  };
+  aplicar('microfone-mudo', sessao.detectores.voce.alimentar(niveis.voce, agora));
+  aplicar('aba-muda', sessao.detectores.cliente.alimentar(niveis.cliente, agora));
+  if (sessao.semCopia() || sessao.gravador.erroArmazem) sessao.alertas.add('sem-copia');
+  if ([...sessao.alertas].sort().join() !== antes) avisarEstado();
+}
+
+// Erro do MediaRecorder no meio: para, salva o que ha e deixa aviso pendente no icone.
+function gravadorFalhou(id, erro) {
+  console.error('Gravador: o MediaRecorder parou com erro', erro);
+  if (!sessao || sessao.id !== id || maquina.estado !== 'gravando') return;
+  avisarSw('aviso', { codigo: 'gravador-parou' }).catch(() => {});
+  pararESalvar().catch(() => {});
 }
 
 async function pararESalvar() {
+  if (maquina.estado === 'salvando') return { ok: false, motivo: 'aguardar' }; // Parar duplo (atalho + clique)
   if (!maquina.pedirParada()) return { ok: false, motivo: 'nada-a-parar' };
   const s = sessao;
   clearInterval(s.relogio);
-  s.alerta = false;
+  s.alertas.clear();
   avisarEstado();
   let arquivo;
   try {
@@ -212,14 +265,20 @@ async function entregar(idGravacao, nome, arquivo) {
 }
 
 // Fim do salvamento. Sempre solta a maquina e o endereco blob, mesmo se o armazem falhar
-// (achado da revisao de 09/11/2026: falha aqui deixava tudo preso em "salvando").
+// (revisao de 09/11/2026: falha aqui deixava tudo preso em "salvando").
 // Vale tambem para gravacao que este offscreen nao conhece (foi recriado no meio do download):
 // salvo = apaga a copia de seguranca; falha = marca pendente.
 async function concluir(idGravacao, sucesso) {
   try {
     const banco = await armazem();
     if (sucesso) {
-      await banco.apagarGravacao(idGravacao);
+      try {
+        await banco.apagarGravacao(idGravacao);
+      } catch (e) {
+        // O arquivo esta salvo; so a copia ficou. Marca 'salva' para nao aparecer como "nao salva".
+        await banco.marcar(idGravacao, 'salva');
+        throw e;
+      }
     } else {
       // Mantem "gravando" quando ja era (a recuperacao continua marcando _recuperada no nome).
       const g = await banco.lerGravacao(idGravacao);

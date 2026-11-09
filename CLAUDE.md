@@ -58,10 +58,12 @@ pasta DEV. Este arquivo só acrescenta o que é deste projeto.
 ## Regras de ouro (não quebrar sem decisão do usuário)
 
 - **Nada sai do computador.** A barreira é a política de segurança do manifest
-  (`content_security_policy`, com `connect-src 'none'`): o Chrome bloqueia qualquer conexão das
-  páginas da extensão. A guarda `testes/guardas/guardas.test.js` exige essa política exata e é um
-  alarme de texto contra descuido (rede, código de fora) — não segura código escrito para escapar
-  dela. Gravação tem voz e dado de cliente (LGPD).
+  (`content_security_policy`): o Chrome bloqueia `fetch`, XHR, WebSocket, EventSource, `sendBeacon`,
+  script de fora e `eval` nas páginas da extensão. Ela **não** governa WebRTC, `chrome.tabs.create`
+  ou navegação com endereço de fora, nem `chrome.downloads.download` de endereço remoto — esses só
+  têm o alarme de texto de `testes/guardas/guardas.test.js` (que também exige a política exata) e,
+  no download, `arquivoAceito`. O alarme pega descuido, não código escrito para escapar dele.
+  Gravação tem voz e dado de cliente (LGPD).
 - **O Chrome carrega a extensão de `C:\Extensoes\Gravador de Chamadas`**, nunca da pasta do Drive
   (decisão do usuário, 09/11/2026). Atualizar = `node ferramentas/instalar.js` + recarregar.
 - **Permissões mínimas, lista fechada** no manifest (a guarda confere a lista exata). Permissão nova é

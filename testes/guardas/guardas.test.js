@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MOTIVOS } from '../../extensao/lib/mensagens.js';
+import { MOTIVOS, CODIGOS_DE_ALERTA, CODIGOS_PENDENTES } from '../../extensao/lib/mensagens.js';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EXT = path.join(RAIZ, 'extensao');
@@ -78,6 +78,7 @@ test('guarda: o atalho combinado e Alt+Shift+G', () => {
   assert.equal(manifest().commands['alternar-gravacao'].suggested_key.default, 'Alt+Shift+G');
 });
 
+// [regra, nome, exemplo]. O exemplo e o que o autoteste planta: cada regra tem de pegar o seu.
 const PROIBIDOS = [
   [/\bfetch\s*\(/, 'fetch'],
   [/XMLHttpRequest/, 'XMLHttpRequest'],
@@ -103,6 +104,34 @@ const PROIBIDOS = [
   [/window\.open\s*\(/, 'window.open'],
 ];
 
+// Plantas do autoteste, ESCRITAS A MAO e separadas das regras: se elas viessem da propria lista de
+// regras, apagar uma regra apagaria a planta junto e o autoteste continuaria verde (teste-espelho —
+// sabotagem de 09/11/2026 mostrou). Nome da regra -> exemplo que ela tem de pegar.
+const PLANTAS = {
+  fetch: "fetch('/x');",
+  XMLHttpRequest: 'const x = new XMLHttpRequest();',
+  WebSocket: "const s = new WebSocket('wss:x');",
+  sendBeacon: "navigator.sendBeacon('/x');",
+  EventSource: "const e = new EventSource('/x');",
+  eval: "eval('1');",
+  'new Function': "const f = new Function('return 1');",
+  importScripts: "importScripts('/x.js');",
+  'recurso de fora': '<img src="//exemplo.invalid/x.png">',
+  'import de fora': "import x from 'https:x';",
+  'url() de fora': 'a { background: url(https:x); }',
+  'endereco http escrito no codigo': "const destino = 'http://exemplo.invalid/';",
+  RTCPeerConnection: 'const p = new RTCPeerConnection({});',
+  WebTransport: "const t = new WebTransport('/x');",
+  'navigator.share': 'navigator.share({});',
+  'mensagem nativa': "chrome.runtime.connectNative('x');",
+  'runtime.connect': 'chrome.runtime.connect();',
+  'mensagem para outra extensao': "chrome.runtime.sendMessage('outra-extensao', {});",
+  'new Image': 'const i = new Image();',
+  'atribuicao de src': 'imagem.src = destino;',
+  'navegacao por location': "location.assign('/x');",
+  'window.open': "window.open('/x');",
+};
+
 function culpadosDeRede(pasta) {
   const culpados = [];
   for (const arquivo of arquivosDeTexto(pasta)) {
@@ -122,27 +151,24 @@ test('guarda: nenhum codigo da extensao usa rede ou codigo de fora', () => {
 });
 
 // Autoteste da guarda (revisao de seguranca de 09/11/2026: a versao anterior so lia .js/.html/
-// .css/.json e deixou passar 10 formas reais). Uma pasta plantada com cada forma tem de dar alarme.
-// Formas que um alarme de texto nao pega (nome montado em pedacos, escape unicode, quebra de linha
-// antes do parentese) ficam para a politica de seguranca do manifest — que bloqueia de verdade.
-test('guarda (autoteste): o alarme le todo tipo de arquivo e reconhece cada forma de rede', () => {
+// .css/.json e deixou passar 10 formas reais; 2a rodada: o autoteste cobria 11 das 22 regras).
+// Uma planta POR REGRA (escrita a mao, em PLANTAS), em tipos de arquivo variados, e cada uma tem de
+// ser pega PELA SUA regra. Formas que um alarme de texto nao pega (nome montado em pedacos, escape
+// unicode, quebra de linha antes do parentese) ficam para a politica de seguranca do manifest — que
+// bloqueia o que governa.
+test('guarda (autoteste): cada regra pega a sua planta, em todo tipo de arquivo', () => {
   const pasta = mkdtempSync(path.join(tmpdir(), 'gravador-guarda-'));
+  const tipos = ['mjs', 'svg', 'htm', 'txt', 'js', 'css', 'html', 'json'];
   try {
-    const plantas = {
-      'a.mjs': "fetch('/x');",
-      'b.svg': '<script href="https://exemplo.invalid/x.js"></script>',
-      'c.htm': "new RTCPeerConnection({});",
-      'd.txt': "new WebTransport('/x');",
-      'e.js': "chrome.tabs.create({ url: 'https://exemplo.invalid/?d=1' });",
-      'f.js': "chrome.runtime.sendMessage('outra-extensao', {});",
-      'g.js': 'const i = new Image();',
-      'h.js': 'imagem.src = destino;',
-      'i.js': "location.assign('/x');",
-      'j.js': 'navigator.share({});',
-    };
-    for (const [nome, conteudo] of Object.entries(plantas)) writeFileSync(path.join(pasta, nome), conteudo + '\n');
-    const achados = new Set(culpadosDeRede(pasta).map((c) => c.split(':')[0]));
-    assert.deepEqual([...achados].sort(), Object.keys(plantas).sort());
+    const esperado = Object.entries(PLANTAS).map(([nome, exemplo], i) => {
+      const arquivo = 'regra-' + String(i).padStart(2, '0') + '.' + tipos[i % tipos.length];
+      writeFileSync(path.join(pasta, arquivo), exemplo + '\n');
+      return arquivo + ' ' + nome;
+    });
+    const pegos = new Set(culpadosDeRede(pasta).map((c) => c.replace(/:\d+ /, ' ')));
+    assert.deepEqual(esperado.filter((e) => !pegos.has(e)), []);
+    // Toda regra tem planta (regra nova sem planta nao passa despercebida).
+    assert.deepEqual(PROIBIDOS.map(([, nome]) => nome).filter((nome) => !(nome in PLANTAS)), []);
   } finally {
     rmSync(pasta, { recursive: true, force: true });
   }
@@ -170,6 +196,23 @@ test('guarda: todo motivo de erro usado no codigo tem mensagem para o usuario', 
   }
   assert.ok(usados.size >= 10, 'a guarda nao achou os motivos (achou ' + usados.size + ')');
   assert.deepEqual([...usados].filter((m) => !MOTIVOS.includes(m)), []);
+});
+
+// 2a rodada de revisao (09/11/2026): CODIGOS_DE_ALERTA era exportado e nao usado; nada conferia que
+// todo aviso tem texto e que todo texto ainda tem uso.
+test('guarda: todo aviso usado no offscreen tem texto, e todo texto de aviso tem uso', () => {
+  const offscreen = texto(path.join(EXT, 'offscreen.js'));
+  const alertasUsados = new Set([
+    ...[...offscreen.matchAll(/aplicar\('([a-z-]+)'/g)].map((m) => m[1]),
+    ...[...offscreen.matchAll(/alertas\.add\('([a-z-]+)'\)/g)].map((m) => m[1]),
+    ...[...offscreen.matchAll(/new Set\(semCopia \? \['([a-z-]+)'\]/g)].map((m) => m[1]),
+  ]);
+  const pendentesUsados = new Set([...offscreen.matchAll(/'(nao-salva[a-z-]*|gravador-parou)'/g)].map((m) => m[1]));
+  assert.ok(alertasUsados.size >= 3, 'a guarda nao achou os alertas (achou ' + alertasUsados.size + ')');
+  assert.deepEqual([...alertasUsados].filter((c) => !CODIGOS_DE_ALERTA.includes(c)), []);
+  assert.deepEqual(CODIGOS_DE_ALERTA.filter((c) => !alertasUsados.has(c)), []);
+  assert.deepEqual([...pendentesUsados].filter((c) => !CODIGOS_PENDENTES.includes(c)), []);
+  assert.deepEqual(CODIGOS_PENDENTES.filter((c) => !pendentesUsados.has(c)), []);
 });
 
 test('guarda: todo link dos documentos aponta para um caminho que existe', () => {

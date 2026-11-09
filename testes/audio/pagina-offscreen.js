@@ -270,8 +270,14 @@ async function avisos() {
     arquivoRecebido = null;
     paraSw = [];
     await enviar(PEDIDO);
-    await espera(2500);
-    const mudos = (await enviar({ tipo: 'estado' })).alertas;
+    // Espera os DOIS avisos aparecerem (com limite), em vez de tempo fixo: com a maquina ocupada a
+    // vigia atrasa (2a rodada de revisao, 09/11/2026).
+    let mudos = [];
+    const limite = performance.now() + 10000;
+    while (mudos.length < 2 && performance.now() < limite) {
+      await espera(200);
+      mudos = (await enviar({ tipo: 'estado' })).alertas;
+    }
     const avisados = paraSw.filter((m) => m.tipo === 'estado-mudou' && m.estado === 'gravando').map((m) => m.alertas);
     await enviar({ tipo: 'parar' });
     r = await esperarArquivo();
@@ -364,6 +370,95 @@ async function falhaDepoisDeRegistrar() {
   return { inicio, fim: resumoEstado(await enviar({ tipo: 'estado' })), gravacoes: await gravacoesNoArmazem() };
 }
 
+// ---- 2a rodada de revisao (09/11/2026) ----
+// Sem copia de seguranca E o download falha: antes, a gravacao sumia (o blob era revogado) e o aviso
+// dizia que ela estava na lista. Agora: se o armazem continua quebrado, ela fica na MEMORIA,
+// aparece como nao salva e pode ser salva de novo; o aviso diz que e so ate fechar o Chrome.
+async function semCopiaEDownloadFalha() {
+  let bytesOriginais = 0;
+  respostaSw = async (msg) => {
+    if (msg.tipo === 'arquivo-pronto') {
+      bytesOriginais = blobs.get(msg.url).size;
+      return { ok: false, motivo: 'salvar', detalhe: 'download recusado (falso)' };
+    }
+    return { ok: true };
+  };
+  paraSw = [];
+  falhasIdb.putGravacoes = true; // o armazem continua quebrado do inicio ao fim
+  try {
+    await enviar(PEDIDO);
+    await espera(1500);
+    const parar = await enviar({ tipo: 'parar' });
+    const depois = await enviar({ tipo: 'estado' });
+    const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
+    const naMemoria = depois.naMemoria || [];
+    falhasIdb.putGravacoes = false;
+    swQueSalva();
+    arquivoRecebido = null;
+    paraSw = [];
+    const recuperar = naMemoria[0] ? await enviar({ tipo: 'recuperar', idGravacao: naMemoria[0].id }) : null;
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    return {
+      parar,
+      estadoDepois: depois.estado,
+      naMemoria: naMemoria.map((g) => ({ situacao: g.situacao, nome: g.nome })),
+      avisos,
+      bytesOriginais,
+      recuperar,
+      bytesRecuperados: recebido ? recebido.blob.size : 0,
+      naMemoriaNoFim: ((await enviar({ tipo: 'estado' })).naMemoria || []).length,
+      limpouPendente: paraSw.some((m) => m.tipo === 'limpar-pendente'),
+      gravacoes: await gravacoesNoArmazem(),
+    };
+  } finally {
+    falhasIdb.putGravacoes = false;
+  }
+}
+
+// Sem copia no inicio, mas o armazem voltou quando o download falhou: a gravacao e guardada nele
+// nessa hora (sobrevive a fechar o Chrome).
+async function semCopiaArmazemVolta() {
+  respostaSw = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+  paraSw = [];
+  falhasIdb.putGravacoes = true;
+  await enviar(PEDIDO);
+  falhasIdb.putGravacoes = false; // o armazem volta durante a gravacao
+  await espera(1500);
+  await enviar({ tipo: 'parar' });
+  const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
+  const guardadas = await gravacoesNoArmazem();
+  const naMemoria = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+  swQueSalva();
+  arquivoRecebido = null;
+  const recuperar = guardadas[0] ? await enviar({ tipo: 'recuperar', idGravacao: guardadas[0].id }) : null;
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return { avisos, guardadas, naMemoria, recuperar, bytes: recebido ? recebido.blob.size : 0, gravacoesDepois: await gravacoesNoArmazem() };
+}
+
+// O aviso "nao salva" so e limpo quando NAO sobra nada por salvar (antes, nunca era limpo).
+async function limparAvisoSoNoFim() {
+  const banco = await abrirArmazem();
+  for (const id of ['p1', 'p2']) {
+    await banco.criarGravacao({ id, nome: 'Gravacoes de Chamadas/' + id + '.m4a', origem: 'WhatsApp', inicio: 10, situacao: 'pendente' });
+    await banco.guardarPedaco(id, 0, new Blob(['pedaco ' + id]));
+  }
+  banco.fechar();
+  swQueSalva();
+  const salvar = async (id) => {
+    arquivoRecebido = null;
+    paraSw = [];
+    await enviar({ tipo: 'recuperar', idGravacao: id });
+    await esperarArquivo();
+    await enviar({ tipo: 'salvo', idGravacao: id });
+    return paraSw.some((m) => m.tipo === 'limpar-pendente');
+  };
+  const limpouNoPrimeiro = await salvar('p1');
+  const limpouNoSegundo = await salvar('p2');
+  return { limpouNoPrimeiro, limpouNoSegundo };
+}
+
 // Parar pedido duas vezes ao mesmo tempo (atalho + clique): um salva, o outro manda aguardar.
 async function pararDuplo() {
   swQueSalva();
@@ -422,6 +517,9 @@ window.rodarCenarios = async () => ({
   abaFechadaNoUltimoInstante: await abaFechadaNoUltimoInstante(),
   falhaDepoisDeRegistrar: await falhaDepoisDeRegistrar(),
   pararDuplo: await pararDuplo(),
+  semCopiaEDownloadFalha: await semCopiaEDownloadFalha(),
+  semCopiaArmazemVolta: await semCopiaArmazemVolta(),
+  limparAvisoSoNoFim: await limparAvisoSoNoFim(),
 });
 
 window.paginaPronta = true;

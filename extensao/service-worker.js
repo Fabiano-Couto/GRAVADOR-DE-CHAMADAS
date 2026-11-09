@@ -7,6 +7,7 @@ import { abrirArmazem } from './lib/armazem.js';
 import { textoDoMotivo } from './lib/mensagens.js';
 import { anotarSalvamento, retirarSalvamento, arquivoAceito } from './lib/downloads.js';
 import { aparenciaDoIcone, CORES } from './lib/icone.js';
+import { comPendente, semPendentes, depoisDeVisto } from './lib/pendentes.js';
 
 const MAXIMO_ULTIMAS = 5;
 
@@ -57,11 +58,13 @@ async function tratarMensagem(msg) {
     case 'arquivo-pronto':
       return salvarArquivo(msg);
     case 'aviso':
-      await marcarPendente(msg.codigo);
+      await mudarPendentes((lista) => comPendente(lista, msg.codigo));
+      return { ok: true };
+    case 'limpar-pendente':
+      await mudarPendentes((lista) => semPendentes(lista, msg.codigos || []));
       return { ok: true };
     case 'pendente-visto':
-      await chrome.storage.session.remove('pendente');
-      await atualizarIcone(await estadoAtual());
+      await mudarPendentes(depoisDeVisto);
       return { ok: true };
     default:
       return { ok: false, motivo: 'desconhecido' };
@@ -117,17 +120,19 @@ async function estadoAtual() {
 
 async function recuperaveis() {
   const ocupadas = [];
+  let naMemoria = [];
   if (await existeOffscreen()) {
     const e = await perguntarOffscreen('estado');
     if (e.atual) ocupadas.push(e.atual.id);
     ocupadas.push(...(e.emEntrega || []));
+    naMemoria = e.naMemoria || []; // nao salvas que nao couberam no armazem (so ate fechar o Chrome)
   }
   const banco = await abrirArmazem();
   try {
     const todas = await banco.listarGravacoes();
     // 'salva' = download concluido, so a copia nao tinha sido apagada: tenta apagar de novo agora.
     for (const g of todas.filter((g) => g.situacao === 'salva')) await banco.apagarGravacao(g.id).catch(() => {});
-    const lista = gravacoesParaRecuperar(todas, ocupadas);
+    const lista = gravacoesParaRecuperar([...todas, ...naMemoria], ocupadas);
     return { ok: true, lista: lista.map(({ id, nome, origem, inicio, situacao }) => ({ id, nome, origem, inicio, situacao })) };
   } finally {
     banco.fechar();
@@ -145,9 +150,9 @@ async function salvarArquivo({ idGravacao, url, nome }) {
     const downloadId = await chrome.downloads.download(opcoesDownload(url, nome));
     return { ok: true, nome, downloadId };
   } catch (e) {
-    // O offscreen recebe a resposta de falha e conclui como 'falhou-salvar' (gravacao fica guardada).
+    // O offscreen recebe a resposta de falha, guarda a gravacao onde der e manda o aviso certo
+    // (so ele sabe se ela ficou no armazem ou so na memoria).
     await retirarSalvamento(chrome.storage.session, url);
-    await marcarPendente('nao-salva');
     return { ok: false, motivo: 'salvar', detalhe: String(e?.message || e) };
   }
 }
@@ -162,10 +167,9 @@ async function concluirDownload(downloadId, fim) {
     await registrarUltima({ downloadId, nome: info.nome, quando: Date.now() });
     await perguntarOffscreen('salvo', { idGravacao: info.idGravacao });
   } else {
+    // O offscreen guarda a gravacao onde der e manda o aviso pendente com o texto certo; o icone
+    // fica com "!" ate nao sobrar nada por salvar (revisoes de 09/11/2026).
     await perguntarOffscreen('falhou-salvar', { idGravacao: info.idGravacao });
-    // Pode ter acontecido com a janelinha fechada (aba fechada no fim da chamada): o icone fica
-    // com "!" ate ela ser aberta (revisao de 09/11/2026).
-    await marcarPendente('nao-salva');
   }
 }
 
@@ -207,16 +211,17 @@ function perguntarOffscreen(tipo, dados = {}) {
 
 // Regra da aparencia em lib/icone.js (testada); aqui so aplica.
 async function atualizarIcone(r) {
-  const { pendente = null } = await chrome.storage.session.get('pendente');
-  const a = aparenciaDoIcone(r, pendente);
+  const { pendentes = [] } = await chrome.storage.session.get('pendentes');
+  const a = aparenciaDoIcone(r, pendentes);
   await chrome.action.setBadgeText({ text: a.texto });
   await chrome.action.setBadgeBackgroundColor({ color: a.cor });
   await chrome.action.setTitle({ title: a.titulo });
 }
 
-// Aviso que aconteceu sem ninguem olhando: fica no icone ate a janelinha ser aberta.
-async function marcarPendente(codigo) {
-  await chrome.storage.session.set({ pendente: codigo });
+// Avisos que aconteceram sem ninguem olhando (regras em lib/pendentes.js) e o icone em seguida.
+async function mudarPendentes(mudanca) {
+  const { pendentes = [] } = await chrome.storage.session.get('pendentes');
+  await chrome.storage.session.set({ pendentes: mudanca(pendentes) });
   await atualizarIcone(await estadoAtual().catch(() => ({ estado: 'parado' })));
 }
 

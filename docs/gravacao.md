@@ -87,10 +87,21 @@ A gravação continua; o ícone vira `!` âmbar e a janelinha mostra o texto de 
 
 ### Avisos pendentes (aconteceram sem ninguém olhando)
 
-Salvamento que falhou (download interrompido, download recusado) e gravador que parou sozinho por
-erro do Chrome deixam `pendente` no `chrome.storage.session`: o ícone fica com `!` até a janelinha
-ser aberta, que mostra o texto e limpa (`pendente-visto`). Caso típico: o usuário fecha a aba no fim
-da chamada, a gravação para sozinha e o download falha — antes, nada avisava.
+Lista `pendentes` no `chrome.storage.session` (lib/pendentes.js): um aviso não apaga o outro. O ícone
+fica com `!` enquanto a lista não estiver vazia; a janelinha mostra todos ao abrir.
+
+| Código | Quando | Sai quando |
+|---|---|---|
+| `nao-salva` | download falhou; a gravação está no armazém ("Gravações não salvas") | não sobra nada por salvar (o offscreen avisa `limpar-pendente`) |
+| `nao-salva-memoria` | download falhou e a cópia de segurança não funciona: a gravação está **só na memória** do offscreen, na lista até o Chrome fechar | idem |
+| `nao-salva-perdida` | falhou e não havia arquivo nem cópia | a janelinha mostra (informativo) |
+| `gravador-parou` | erro do MediaRecorder no meio | a janelinha mostra (informativo) |
+
+**Quem decide o aviso é o offscreen**, que sabe onde a gravação ficou (`guardarNaoSalva`): no
+armazém (já estava, ou é guardada nessa hora se o armazém voltou), na memória, ou em lugar nenhum. O
+service worker só repassa. 2ª rodada de revisão (09/11/2026): antes, sem cópia de segurança e com o
+download falhando, o blob era revogado e a gravação sumia — e o aviso dizia que ela estava na lista;
+e o `!` de "não salva" nunca saía, nem depois de salvar.
 
 ### Erro do gravador no meio
 
@@ -138,7 +149,8 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | lib/armazem.js | IndexedDB: gravações e pedaços |
 | lib/downloads.js | ligação "endereço em download → gravação", uma chave por download; `arquivoAceito` |
 | lib/icone.js | aparência do ícone (selo, cor, dica) pela situação e pelo aviso pendente |
-| lib/silencio.js | aviso de microfone mudo |
+| lib/silencio.js | detector de silêncio absoluto (usado no microfone, 10 s, e na aba, 30 s) |
+| lib/pendentes.js | lista de avisos pendentes do ícone (entrar sem repetir, resolver, tirar os informativos) |
 | lib/mensagens.js | texto de cada motivo de recusa/erro |
 | icones/ | PNG 16/48/128, gerados por [gerar-icones.js](../ferramentas/gerar-icones.js) |
 
@@ -149,9 +161,11 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | Esquerdo = microfone, direito = aba | separar quem falou o quê; permite transcrição por lado | usuário, 09/11/2026 |
 | Salvar em Downloads > Gravacoes de Chamadas, sem perguntar e sem sobrescrever | automático, nada se perde | usuário, 09/11/2026 |
 | M4A/AAC | abre em qualquer player e no celular; nativo no Chrome | Claude, avisado no chat, 09/11/2026 |
-| Nada sai do computador. **Barreira:** política de segurança do manifest (`connect-src 'none'`, `script-src 'self'`) — o próprio Chrome bloqueia qualquer conexão das páginas da extensão. **Alarme:** a guarda de texto (contra descuido; não segura código escrito para escapar dela) | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026; barreira pela revisão de segurança, 09/11/2026 |
+| Nada sai do computador. **Barreira:** política de segurança do manifest — o Chrome bloqueia, nas páginas da extensão, `fetch`, XHR, WebSocket, EventSource, `sendBeacon` (`connect-src 'none'`), script de fora e `eval` (`script-src 'self'`). **Não governa** WebRTC (`RTCPeerConnection`), `chrome.tabs.create`/navegação com endereço de fora nem `chrome.downloads.download` de endereço remoto: para esses, só o **alarme** de texto (contra descuido; não segura código escrito para escapar dele) e, no download, `arquivoAceito` | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026; barreira pela revisão de segurança; alcance corrigido na 2ª rodada, 09/11/2026 |
 | O service worker só baixa blob da própria extensão, para a pasta das gravações, nome simples `.m4a` (`arquivoAceito`, lib/downloads.js) | é a única linha em que valor vindo de mensagem vira arquivo no disco | revisão de segurança, 09/11/2026 |
 | O Chrome carrega a extensão de `C:\Extensoes\Gravador de Chamadas` (fora do Drive), preenchida por [instalar.js](../ferramentas/instalar.js) | código com microfone liberado não pode ser o da pasta sincronizada | usuário, 09/11/2026 (revisão de segurança) |
+| Mantém `C:\Extensoes` mesmo sabendo que outras contas locais do Windows podem escrever lá (alternativa: `%LOCALAPPDATA%`) | o computador é de uso dele | usuário, 09/11/2026 ("Manter C:\Extensoes") |
+| Sem cópia de segurança e download falhando: a gravação é guardada no armazém nessa hora ou fica na memória (na lista até o Chrome fechar) | perder a gravação era o pior efeito | 2ª rodada de revisão, 09/11/2026 |
 | Permissões mínimas e lista fechada | idem | plano aprovado; `activeTab` acrescentada na implementação para ler o endereço da aba (nome do arquivo) |
 | Grava o microfone direto, mesmo com o usuário no mudo da chamada | etapa 1 não lê o mudo da página | comportamento conhecido, avisado no plano |
 
@@ -219,6 +233,7 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | [popup.test.js](../testes/tela/popup.test.js) | a janelinha de verdade em Chrome real (Chrome da extensão falso injetado antes dos scripts, sob a política do manifest): estilo **calculado** (barras escondidas parado), textos e botões em cada situação, nome do microfone, aviso, recusa como erro, "Gravação salva" mesmo com o download terminando antes da resposta, aviso pendente; confere que o CSS carregou (largura 320 px) para não ficar cego |
 | (sem teste automático) | service-worker.js usa APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): a lógica que dá para separar foi para lib/ (estado, nomes, downloads, icone, mensagens) e é testada; o resto é conferido na conferência local guiada |
 | [guardas.test.js](../testes/guardas/guardas.test.js) | política de segurança exata no manifest; alarme de rede/código de fora em todo arquivo da extensão; permissões exatas; áudio fora do git; sem `_`; motivos com texto; docs sem caminho morto |
-| [instalar.test.js](../testes/unidade/instalar.test.js) | instalador: cópia conferida, recusa apagar pasta alheia, recusa destino no Drive |
+| [instalar.test.js](../testes/unidade/instalar.test.js) | instalador: cópia conferida (sem depender da ordem do disco), recusa apagar pasta alheia, recusa destino em pasta sincronizada (Drive, drives compartilhados, OneDrive, Dropbox, iCloud) e dentro de repositório git, pasta só com `desktop.ini` conta como vazia, sem pasta temporária sobrando |
+| [pendentes.test.js](../testes/unidade/pendentes.test.js) | um aviso pendente não apaga o outro; informativos saem ao abrir; "não salva" só ao resolver |
 | offscreen.test.js (política) | as páginas de teste rodam sob a mesma política do manifest: a gravação funciona e o Chrome bloqueia conexão de verdade |
 | [smoke.js](../ferramentas/smoke.js) | sintaxe, manifest e arquivos citados; controle que tem de falhar |

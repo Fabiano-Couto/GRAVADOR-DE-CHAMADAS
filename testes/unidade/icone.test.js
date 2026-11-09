@@ -1,13 +1,14 @@
-// Icone da extensao — Gravador v1, achados da revisao de 09/11/2026.
+// Icone da extensao — Gravador v1, achados das revisoes de 09/11/2026.
 // Defeitos que estes testes impedem: dica "Gravando undefined" quando a situacao vem no formato do
 // resumo; aviso de gravacao com problema sem selo; salvamento que falhou sem ninguem olhando (aba
-// fechada no fim da chamada) e o icone voltando ao normal como se nada tivesse acontecido.
+// fechada no fim da chamada) e o icone voltando ao normal como se nada tivesse acontecido; um aviso
+// pendente apagando outro ainda nao lido (2a rodada).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { aparenciaDoIcone } from '../../extensao/lib/icone.js';
 
 test('icone: gravando mostra REC vermelho com a origem', () => {
-  assert.deepEqual(aparenciaDoIcone({ estado: 'gravando', alertas: [], origem: 'WhatsApp' }, null), {
+  assert.deepEqual(aparenciaDoIcone({ estado: 'gravando', alertas: [], origem: 'WhatsApp' }, []), {
     texto: 'REC',
     cor: '#D93025',
     titulo: 'Gravando WhatsApp',
@@ -15,25 +16,32 @@ test('icone: gravando mostra REC vermelho com a origem', () => {
 });
 
 test('icone: a origem tambem vale quando vem dentro de atual (formato do resumo)', () => {
-  assert.equal(aparenciaDoIcone({ estado: 'gravando', alertas: [], atual: { origem: 'Meet_abc-defg-hij' } }, null).titulo, 'Gravando Meet_abc-defg-hij');
+  assert.equal(aparenciaDoIcone({ estado: 'gravando', alertas: [], atual: { origem: 'Meet_abc-defg-hij' } }, []).titulo, 'Gravando Meet_abc-defg-hij');
 });
 
 test('icone: gravando com aviso mostra "!" ambar e o texto do aviso na dica', () => {
-  const a = aparenciaDoIcone({ estado: 'gravando', alertas: ['aba-muda'], origem: 'WhatsApp' }, null);
+  const a = aparenciaDoIcone({ estado: 'gravando', alertas: ['aba-muda'], origem: 'WhatsApp' }, []);
   assert.equal(a.texto, '!');
   assert.equal(a.cor, '#E37400');
   assert.ok(a.titulo.startsWith('Gravando WhatsApp. Nenhum som vem da aba gravada'), a.titulo);
 });
 
-test('icone: parado com aviso pendente continua com "!" ate a janelinha ser aberta', () => {
-  assert.deepEqual(aparenciaDoIcone({ estado: 'parado', alertas: [] }, 'nao-salva'), {
+test('icone: parado com aviso pendente continua com "!" ate o aviso ser resolvido', () => {
+  assert.deepEqual(aparenciaDoIcone({ estado: 'parado', alertas: [] }, ['nao-salva']), {
     texto: '!',
     cor: '#E37400',
-    titulo: 'Uma gravação NÃO foi salva em Downloads. Abra a janelinha: ela está em "Gravações não salvas".',
+    titulo: 'Uma gravação NÃO foi salva em Downloads. Ela está em "Gravações não salvas": clique em Salvar.',
   });
 });
 
+test('icone: dois avisos pendentes aparecem os dois na dica (um nao apaga o outro)', () => {
+  assert.equal(
+    aparenciaDoIcone({ estado: 'parado', alertas: [] }, ['nao-salva', 'gravador-parou']).titulo,
+    'Uma gravação NÃO foi salva em Downloads. Ela está em "Gravações não salvas": clique em Salvar. A gravação parou sozinha por um erro do Chrome. O que foi gravado até ali foi mandado para Downloads.',
+  );
+});
+
 test('icone: parado sem pendencia fica limpo; salvando mostra reticencias', () => {
-  assert.deepEqual(aparenciaDoIcone({ estado: 'parado', alertas: [] }, null), { texto: '', cor: '#5F6368', titulo: 'Gravador de Chamadas' });
-  assert.equal(aparenciaDoIcone({ estado: 'salvando', alertas: [] }, null).texto, '...');
+  assert.deepEqual(aparenciaDoIcone({ estado: 'parado', alertas: [] }, []), { texto: '', cor: '#5F6368', titulo: 'Gravador de Chamadas' });
+  assert.equal(aparenciaDoIcone({ estado: 'salvando', alertas: [] }, []).texto, '...');
 });

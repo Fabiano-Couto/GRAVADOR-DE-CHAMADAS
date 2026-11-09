@@ -8,8 +8,9 @@ const TITULO = 'Gravador de Chamadas';
 // r: aviso 'estado-mudou' do offscreen ({ estado, alertas, origem }) ou o resumo dele
 //    ({ estado, alertas, atual: { origem } }) — a origem pode vir dos dois jeitos (revisao de
 //    09/11/2026: a dica mostrava "Gravando undefined").
-// pendente: codigo de aviso que aconteceu sem a janelinha aberta (fica ate ela ser aberta) ou null.
-export function aparenciaDoIcone(r, pendente) {
+// pendentes: lista de codigos de aviso que aconteceram sem a janelinha aberta (um nao apaga o outro —
+// 2a rodada de revisao, 09/11/2026).
+export function aparenciaDoIcone(r, pendentes = []) {
   const estado = r ? r.estado : 'parado';
   const alertas = (r && r.alertas) || [];
   const origem = (r && (r.origem || (r.atual && r.atual.origem))) || 'a aba';
@@ -21,6 +22,6 @@ export function aparenciaDoIcone(r, pendente) {
   }
   if (estado === 'iniciando') return { texto: '...', cor: CORES.neutra, titulo: 'Iniciando a gravação' };
   if (estado === 'salvando') return { texto: '...', cor: CORES.neutra, titulo: 'Salvando a gravação' };
-  if (pendente) return { texto: '!', cor: CORES.alerta, titulo: textoDoPendente(pendente) };
+  if (pendentes && pendentes.length) return { texto: '!', cor: CORES.alerta, titulo: pendentes.map(textoDoPendente).join(' ') };
   return { texto: '', cor: CORES.neutra, titulo: TITULO };
 }

@@ -13,12 +13,27 @@ let ocupado = false;
 let ultimoEstado = null;
 // Depois de Parar/Salvar com sucesso: espera o download terminar para dizer "salva" (ou falhar).
 let esperandoSalvar = false;
+// Mensagem fixa (resultado de uma acao, aviso pendente). Um alerta da gravacao em andamento aparece
+// por cima dela enquanto durar e, quando acaba, a fixa volta (2a rodada de revisao, 09/11/2026:
+// antes, o alerta apagava o aviso pendente e ficava na tela depois de acabar).
+let fixo = null;
 
 function mostrarAviso(texto, erro = false) {
   const aviso = $('aviso');
   aviso.textContent = texto || '';
   aviso.hidden = !texto;
   aviso.classList.toggle('erro', Boolean(texto) && erro);
+}
+
+function fixar(texto, erro = false) {
+  fixo = texto ? { texto, erro } : null;
+  mostrarAviso(texto, erro);
+}
+
+function mostrarAvisoDaSituacao(alertas) {
+  if (alertas && alertas.length) mostrarAviso(alertas.map(textoDoAlerta).join(' '));
+  else if (fixo) mostrarAviso(fixo.texto, fixo.erro);
+  else mostrarAviso('');
 }
 
 function cronometro(ms) {
@@ -57,8 +72,6 @@ function desenhar(r) {
     $('nivel-cliente').style.width = largura(r.niveis?.cliente);
     botao.textContent = 'Parar e salvar';
     botao.disabled = ocupado;
-    if (r.alertas && r.alertas.length) mostrarAviso(r.alertas.map(textoDoAlerta).join(' '));
-    else if ($('aviso').dataset.fixo !== 'sim') mostrarAviso('');
   } else if (gravandoOutra) {
     texto.textContent = 'Gravando outra aba: ' + r.atual.origem;
     botao.textContent = 'Gravar esta aba';
@@ -75,6 +88,7 @@ function desenhar(r) {
     botao.textContent = 'Gravar esta aba';
     botao.disabled = ocupado;
   }
+  mostrarAvisoDaSituacao(gravandoAqui ? r.alertas : []);
 }
 
 // Pergunta direto ao offscreen: sem o salto pelo service worker (que antes reenviava a pergunta e
@@ -97,7 +111,6 @@ async function aoClicar() {
   ocupado = true;
   $('botao').disabled = true;
   const parando = ultimoEstado?.estado === 'gravando';
-  $('aviso').dataset.fixo = '';
   // Marca ANTES de pedir: um arquivo pequeno pode terminar de baixar antes da resposta voltar, e o
   // "Gravação salva" se perdia (revisao de 09/11/2026).
   if (parando) esperandoSalvar = true;
@@ -105,18 +118,15 @@ async function aoClicar() {
     const r = await pedirSw('alternar', { tabId: abaAtual.id });
     if (!r || !r.ok) {
       esperandoSalvar = false;
-      mostrarAviso(textoDoMotivo(r), r?.motivo !== 'microfone');
-      $('aviso').dataset.fixo = 'sim';
+      fixar(textoDoMotivo(r), r?.motivo !== 'microfone');
     } else if (parando) {
-      if (esperandoSalvar) mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
-      $('aviso').dataset.fixo = 'sim';
+      if (esperandoSalvar) fixar('Salvando em Downloads > Gravacoes de Chamadas...');
     } else {
-      mostrarAviso('');
+      fixar(null);
     }
   } catch (e) {
     esperandoSalvar = false;
-    mostrarAviso(textoDoMotivo({ motivo: 'interno', detalhe: String(e?.message || e) }), true);
-    $('aviso').dataset.fixo = 'sim';
+    fixar(textoDoMotivo({ motivo: 'interno', detalhe: String(e?.message || e) }), true);
   } finally {
     ocupado = false;
     await atualizar();
@@ -127,7 +137,12 @@ async function aoClicar() {
 function descreverGravacao(g) {
   const d = new Date(g.inicio);
   const quando = doisDigitos(d.getDate()) + '/' + doisDigitos(d.getMonth() + 1) + ' ' + doisDigitos(d.getHours()) + ':' + doisDigitos(d.getMinutes());
-  const situacao = g.situacao === 'gravando' ? 'interrompida no meio' : 'não chegou a ser salva';
+  const situacao =
+    g.situacao === 'gravando'
+      ? 'interrompida no meio'
+      : g.situacao === 'memoria'
+        ? 'não salva — só até fechar o Chrome'
+        : 'não chegou a ser salva';
   return quando + ' · ' + g.origem + ' · ' + situacao;
 }
 
@@ -164,12 +179,11 @@ async function carregarRecuperaveis() {
       esperandoSalvar = true; // antes de pedir (mesma corrida do Parar)
       const resposta = await pedirSw('recuperar', { idGravacao: g.id }).catch((e) => ({ ok: false, motivo: 'interno', detalhe: String(e) }));
       if (resposta && resposta.ok) {
-        if (esperandoSalvar) mostrarAviso('Salvando em Downloads > Gravacoes de Chamadas...');
+        if (esperandoSalvar) fixar('Salvando em Downloads > Gravacoes de Chamadas...');
       } else {
         esperandoSalvar = false;
-        mostrarAviso(textoDoMotivo(resposta), true);
+        fixar(textoDoMotivo(resposta), true);
       }
-      $('aviso').dataset.fixo = 'sim';
       carregarRecuperaveis();
     });
 
@@ -183,10 +197,7 @@ async function carregarRecuperaveis() {
       descartar.disabled = true;
       salvar.disabled = true;
       const resposta = await pedirSw('descartar', { idGravacao: g.id }).catch((e) => ({ ok: false, motivo: 'interno', detalhe: String(e) }));
-      if (!resposta || !resposta.ok) {
-        mostrarAviso(textoDoMotivo(resposta), true);
-        $('aviso').dataset.fixo = 'sim';
-      }
+      if (!resposta || !resposta.ok) fixar(textoDoMotivo(resposta), true);
       carregarRecuperaveis();
     });
 
@@ -232,8 +243,7 @@ async function iniciar() {
     if (esperandoSalvar) {
       esperandoSalvar = false;
       const nome = (mudancas.ultimas.newValue?.[0]?.nome || '').split('/').pop();
-      mostrarAviso('Gravação salva: ' + nome);
-      $('aviso').dataset.fixo = 'sim';
+      fixar('Gravação salva: ' + nome);
     }
     carregarRecuperaveis();
   });
@@ -244,16 +254,14 @@ async function iniciar() {
     const [item] = await chrome.downloads.search({ id: delta.id });
     if (!item || !nossoDownload(item.url)) return;
     esperandoSalvar = false;
-    mostrarAviso(textoDoMotivo({ motivo: 'salvar' }), true);
-    $('aviso').dataset.fixo = 'sim';
+    fixar(textoDoMotivo({ motivo: 'salvar' }), true);
     setTimeout(carregarRecuperaveis, 500);
   });
-  // Aviso que aconteceu com a janelinha fechada (salvamento falhou, gravador parou): mostra e limpa
-  // o "!" do icone.
-  const { pendente = null } = await chrome.storage.session.get('pendente');
-  if (pendente) {
-    mostrarAviso(textoDoPendente(pendente), true);
-    $('aviso').dataset.fixo = 'sim';
+  // Avisos que aconteceram com a janelinha fechada (salvamento falhou, gravador parou): mostra todos.
+  // Os informativos saem do icone agora; os "nao salva" so quando nada mais faltar salvar.
+  const { pendentes = [] } = await chrome.storage.session.get('pendentes');
+  if (pendentes.length) {
+    fixar(pendentes.map(textoDoPendente).join(' '), true);
     pedirSw('pendente-visto').catch(() => {});
   }
   mostrarAtalho();

@@ -208,6 +208,37 @@ test('offscreen: falha depois de registrar a gravacao nao deixa sobra no armazem
   assert.deepEqual(f.gravacoes, []);
 });
 
+// ---- 2a rodada de revisao (09/11/2026) ----
+
+test('offscreen: sem copia e download falhando, a gravacao fica na memoria, avisa e pode ser salva', opcoes, () => {
+  const s = c.semCopiaEDownloadFalha;
+  assert.equal(s.parar.ok, false);
+  assert.equal(s.estadoDepois, 'parado');
+  assert.deepEqual(s.naMemoria, [{ situacao: 'memoria', nome: 'Gravacoes de Chamadas/a.m4a' }]);
+  assert.deepEqual(s.avisos, ['nao-salva-memoria']);
+  assert.ok(s.bytesOriginais > 1000, 'arquivo original vazio: ' + s.bytesOriginais);
+  assert.equal(s.recuperar.ok, true);
+  assert.equal(s.bytesRecuperados, s.bytesOriginais);
+  assert.equal(s.naMemoriaNoFim, 0);
+  assert.equal(s.limpouPendente, true);
+  assert.deepEqual(s.gravacoes, []);
+});
+
+test('offscreen: sem copia no inicio, armazem de volta na falha: a gravacao e guardada nele', opcoes, () => {
+  const s = c.semCopiaArmazemVolta;
+  assert.deepEqual(s.avisos, ['nao-salva']);
+  assert.equal(s.guardadas.length, 1);
+  assert.equal(s.guardadas[0].situacao, 'pendente');
+  assert.equal(s.naMemoria, 0);
+  assert.equal(s.recuperar.ok, true);
+  assert.ok(s.bytes > 1000, 'arquivo recuperado vazio: ' + s.bytes);
+  assert.deepEqual(s.gravacoesDepois, []);
+});
+
+test('offscreen: o aviso de nao salva so e limpo quando nao sobra nada por salvar', opcoes, () => {
+  assert.deepEqual(c.limparAvisoSoNoFim, { limpouNoPrimeiro: false, limpouNoSegundo: true });
+});
+
 test('offscreen: Parar duplo ao mesmo tempo salva uma vez e manda o outro aguardar', opcoes, () => {
   const p = c.pararDuplo;
   assert.deepEqual(p.respostas.map((r) => (r.ok ? 'ok' : r.motivo)).sort(), ['aguardar', 'ok']);

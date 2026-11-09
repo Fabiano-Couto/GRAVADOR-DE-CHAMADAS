@@ -46,11 +46,20 @@ export function textoDoAlerta(codigo) {
   return ALERTAS[codigo] || 'Atenção na gravação.';
 }
 
-// Avisos que ficam no icone ate a janelinha ser aberta (aconteceram sem ninguem olhando).
+// Avisos que ficam no icone (aconteceram sem ninguem olhando). Dois tipos:
+// - "a resolver": somem quando nao sobra nenhuma gravacao por salvar (o offscreen avisa);
+// - "informativos": somem quando a janelinha e aberta e mostra o texto.
 const PENDENTES = {
-  'nao-salva': 'Uma gravação NÃO foi salva em Downloads. Abra a janelinha: ela está em "Gravações não salvas".',
-  'gravador-parou': 'A gravação parou sozinha por um erro do Chrome. O que foi gravado até ali foi salvo.',
+  'nao-salva': 'Uma gravação NÃO foi salva em Downloads. Ela está em "Gravações não salvas": clique em Salvar.',
+  'nao-salva-memoria':
+    'Uma gravação NÃO foi salva em Downloads e a cópia de segurança não está funcionando: ela está em "Gravações não salvas" só até o Chrome fechar. Clique em Salvar agora.',
+  'nao-salva-perdida': 'Uma gravação não pôde ser salva e não havia cópia de segurança dela.',
+  // Revisao de 09/11/2026: o texto dizia "foi salvo" antes de o salvamento acontecer.
+  'gravador-parou': 'A gravação parou sozinha por um erro do Chrome. O que foi gravado até ali foi mandado para Downloads.',
 };
+
+export const CODIGOS_PENDENTES = Object.keys(PENDENTES);
+export const PENDENTES_INFORMATIVOS = ['nao-salva-perdida', 'gravador-parou'];
 
 export function textoDoPendente(codigo) {
   return PENDENTES[codigo] || 'Abra a janelinha do Gravador de Chamadas.';

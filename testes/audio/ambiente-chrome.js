@@ -200,12 +200,21 @@ export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-tes
 
     return {
       avaliar,
-      // Abre outra pagina na mesma aba (o codigo de "antes" roda de novo) e espera ficar pronta.
+      // Abre outra pagina na mesma aba (o codigo de "antes" roda de novo) e espera a pagina NOVA ficar
+      // pronta: marca a antiga e so aceita quando a marca sumiu (2a rodada de revisao, 09/11/2026: a
+      // condicao de pronta ja era verdadeira na pagina antiga e a funcao podia voltar cedo).
       navegar: async (relativa) => {
+        await avaliar('window.__paginaAntiga = true');
         await pagina.enviar('Page.navigate', { url: base + relativa });
-        await espera(200);
-        for (let i = 0; i < 100 && !(await estaPronta()); i++) await espera(100);
-        if (!(await estaPronta())) throw new Error('a pagina nao ficou pronta: ' + relativa);
+        const novaPronta = async () => {
+          try {
+            return (await avaliar('window.__paginaAntiga !== true')) === true && (await estaPronta());
+          } catch {
+            return false;
+          }
+        };
+        for (let i = 0; i < 150 && !(await novaPronta()); i++) await espera(100);
+        if (!(await novaPronta())) throw new Error('a pagina nao ficou pronta: ' + relativa);
       },
       encerrar: async () => {
         pagina.fechar();

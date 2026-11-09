@@ -6,7 +6,7 @@
 import { montarMixer } from './lib/mixer.js';
 import { criarGravador, ErroGravador } from './lib/gravador.js';
 import { abrirArmazem } from './lib/armazem.js';
-import { criarMaquina } from './lib/estado.js';
+import { criarMaquina, gravacoesParaRecuperar } from './lib/estado.js';
 import { criarDetectorSilencio } from './lib/silencio.js';
 import { nomeParaRecuperar } from './lib/nomes.js';
 
@@ -16,8 +16,13 @@ export const AJUSTES = { silencioVoceMs: 10000, silencioClienteMs: 30000, vigiaM
 const maquina = criarMaquina();
 let sessao = null; // { id, meta, ctx, fluxos, mixer, gravador, detectores, alertas, semCopia, relogio }
 let armazemPromessa = null;
-const urls = new Map(); // idGravacao -> endereco blob entregue ao service worker
-const emEntrega = new Set(); // gravacoes sendo salvas agora (fora da lista de recuperaveis)
+// Gravacoes sendo salvas agora: id -> { url, arquivo, nome, origem, inicio }. Ficam fora da lista
+// de recuperaveis enquanto o download nao termina.
+const entregas = new Map();
+// Gravacoes que NAO foram salvas e nao couberam no armazem (cópia de seguranca quebrada): ficam so
+// na memoria deste documento, aparecem em "nao salvas" e podem ser salvas de novo — ate o Chrome
+// fechar (2a rodada de revisao, 09/11/2026: antes, o blob era revogado e a gravacao sumia).
+const naMemoria = new Map();
 
 const armazem = () => {
   if (!armazemPromessa) {
@@ -57,7 +62,8 @@ function resumo() {
       : null,
     niveis: sessao && maquina.estado === 'gravando' ? sessao.mixer.medir() : null,
     alertas: alertasAtuais(),
-    emEntrega: [...emEntrega],
+    emEntrega: [...entregas.keys()],
+    naMemoria: [...naMemoria.entries()].map(([id, g]) => ({ id, nome: g.nome, origem: g.origem, inicio: g.inicio, situacao: 'memoria' })),
   };
 }
 
@@ -253,17 +259,17 @@ async function pararESalvar() {
   } catch {
     // marcar e so informativo (recuperacao usa a marca para o nome); o arquivo ja esta na memoria
   }
-  return entregar(s.id, s.meta.nome, arquivo);
+  return entregar(s.id, { nome: s.meta.nome, origem: s.meta.origem, inicio: s.meta.inicio }, arquivo);
 }
 
 // Entrega o arquivo ao service worker, que salva em Downloads e depois avisa 'salvo' ou 'falhou-salvar'.
-async function entregar(idGravacao, nome, arquivo) {
+// O arquivo fica guardado em 'entregas' ate o fim: se o salvamento falhar, ainda da para guarda-lo.
+async function entregar(idGravacao, meta, arquivo) {
   const url = URL.createObjectURL(arquivo);
-  urls.set(idGravacao, url);
-  emEntrega.add(idGravacao);
+  entregas.set(idGravacao, { url, arquivo, nome: meta.nome, origem: meta.origem, inicio: meta.inicio });
   let r;
   try {
-    r = await avisarSw('arquivo-pronto', { idGravacao, url, nome });
+    r = await avisarSw('arquivo-pronto', { idGravacao, url, nome: meta.nome });
   } catch (e) {
     r = { ok: false, motivo: 'salvar', detalhe: String(e?.message || e) };
   }
@@ -274,14 +280,43 @@ async function entregar(idGravacao, nome, arquivo) {
   return r;
 }
 
+// Onde fica uma gravacao que NAO foi salva. Devolve 'armazem', 'memoria' ou 'nenhuma'.
+// - ja estava no armazem: fica la (mantem "gravando" quando ja era, para o _recuperada do nome);
+// - nunca foi registrada (gravou sem copia de seguranca): tenta guardar no armazem AGORA (ele pode
+//   ter voltado); se nao der, fica na memoria.
+async function guardarNaoSalva(id, entrega) {
+  let banco = null;
+  try {
+    banco = await armazem();
+    const g = await banco.lerGravacao(id);
+    if (g) {
+      if (g.situacao !== 'gravando') await banco.marcar(id, 'pendente');
+      return 'armazem';
+    }
+    if (!entrega) return 'nenhuma';
+    await banco.criarGravacao({ id, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio, situacao: 'pendente' });
+    await banco.guardarPedaco(id, 0, entrega.arquivo);
+    return 'armazem';
+  } catch (e) {
+    console.error('Gravador: nao coube no armazem, fica na memoria', e);
+    if (banco) banco.apagarGravacao(id).catch(() => {}); // nao deixa registro sem audio
+    if (!entrega) return 'nenhuma';
+    naMemoria.set(id, { arquivo: entrega.arquivo, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio });
+    return 'memoria';
+  }
+}
+
 // Fim do salvamento. Sempre solta a maquina e o endereco blob, mesmo se o armazem falhar
 // (revisao de 09/11/2026: falha aqui deixava tudo preso em "salvando").
 // Vale tambem para gravacao que este offscreen nao conhece (foi recriado no meio do download):
-// salvo = apaga a copia de seguranca; falha = marca pendente.
+// salvo = apaga a copia de seguranca; falha = guarda onde der e avisa onde ficou.
 async function concluir(idGravacao, sucesso) {
+  const entrega = entregas.get(idGravacao);
+  let guardada = null;
   try {
-    const banco = await armazem();
     if (sucesso) {
+      naMemoria.delete(idGravacao);
+      const banco = await armazem();
       try {
         await banco.apagarGravacao(idGravacao);
       } catch (e) {
@@ -290,30 +325,50 @@ async function concluir(idGravacao, sucesso) {
         throw e;
       }
     } else {
-      // Mantem "gravando" quando ja era (a recuperacao continua marcando _recuperada no nome).
-      const g = await banco.lerGravacao(idGravacao);
-      if (g && g.situacao !== 'gravando') await banco.marcar(idGravacao, 'pendente');
+      guardada = await guardarNaoSalva(idGravacao, entrega);
     }
   } catch (e) {
     console.error('Gravador: falha no armazem ao concluir', e);
   } finally {
-    const url = urls.get(idGravacao);
-    if (url) {
-      URL.revokeObjectURL(url);
-      urls.delete(idGravacao);
-    }
-    emEntrega.delete(idGravacao);
+    if (entrega) URL.revokeObjectURL(entrega.url);
+    entregas.delete(idGravacao);
     if (sessao && sessao.id === idGravacao && maquina.estado === 'salvando') {
       sessao = null;
       maquina.concluirSalvamento();
       avisarEstado();
     }
   }
-  return { ok: true };
+  if (sucesso) {
+    await verificarSeTudoSalvo();
+  } else {
+    // O aviso diz a verdade sobre onde a gravacao ficou (antes dizia "esta na lista" mesmo sem estar).
+    const codigo = guardada === 'memoria' ? 'nao-salva-memoria' : guardada === 'nenhuma' ? 'nao-salva-perdida' : 'nao-salva';
+    avisarSw('aviso', { codigo }).catch(() => {});
+  }
+  return { ok: true, guardada };
+}
+
+// O aviso "nao salva" do icone so sai quando nao sobra nenhuma gravacao por salvar (2a rodada de
+// revisao, 09/11/2026: antes, nunca saia, e o "!" ficava mentindo depois do Salvar).
+async function verificarSeTudoSalvo() {
+  if (naMemoria.size) return;
+  try {
+    const banco = await armazem();
+    const ocupadas = [...entregas.keys(), ...(sessao ? [sessao.id] : [])];
+    if (gravacoesParaRecuperar(await banco.listarGravacoes(), ocupadas).length) return;
+  } catch {
+    return; // sem como conferir: deixa o aviso
+  }
+  avisarSw('limpar-pendente', { codigos: ['nao-salva', 'nao-salva-memoria'] }).catch(() => {});
 }
 
 async function recuperar(idGravacao) {
-  if ((sessao && sessao.id === idGravacao) || emEntrega.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
+  if ((sessao && sessao.id === idGravacao) || entregas.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
+  const daMemoria = naMemoria.get(idGravacao);
+  if (daMemoria) {
+    naMemoria.delete(idGravacao); // volta para a memoria se falhar de novo (guardarNaoSalva)
+    return entregar(idGravacao, daMemoria, daMemoria.arquivo);
+  }
   const banco = await armazem();
   const gravacao = await banco.lerGravacao(idGravacao);
   if (!gravacao) return { ok: false, motivo: 'nao-encontrada' };
@@ -322,11 +377,13 @@ async function recuperar(idGravacao) {
     await banco.apagarGravacao(idGravacao);
     return { ok: false, motivo: 'vazia' };
   }
-  return entregar(idGravacao, nomeParaRecuperar(gravacao), arquivo);
+  return entregar(idGravacao, { nome: nomeParaRecuperar(gravacao), origem: gravacao.origem, inicio: gravacao.inicio }, arquivo);
 }
 
 async function descartar(idGravacao) {
-  if ((sessao && sessao.id === idGravacao) || emEntrega.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
+  if ((sessao && sessao.id === idGravacao) || entregas.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
+  naMemoria.delete(idGravacao);
   await (await armazem()).apagarGravacao(idGravacao);
+  await verificarSeTudoSalvo();
   return { ok: true };
 }

@@ -1,9 +1,8 @@
-// Detector de silencio ABSOLUTO no microfone. Pausa na conversa ainda tem ruido de sala (pico na
-// casa de 0,001); silencio absoluto (pico abaixo de 0,00001, cerca de -100 dB) por 10 s e sinal de
-// captura quebrada: microfone mudo no Windows, outro dispositivo, permissao perdida.
-// So o canal do microfone e vigiado: o canal da aba fica mudo de verdade quando o cliente esta
-// calado ou a chamada ainda nao foi atendida, e daria alarme falso.
-// Testes: testes/unidade/silencio.test.js.
+// Detector de silencio ABSOLUTO (pico abaixo de 0,00001, cerca de -100 dB) por um tempo seguido.
+// Pausa na conversa ainda tem ruido de sala (pico na casa de 0,001) e nao conta.
+// O offscreen usa dois: microfone (10 s: captura quebrada, microfone mudo no Windows) e aba (30 s:
+// a chamada pode estar noutra janela — janela maior porque o cliente calado tambem emudece a aba).
+// Testes: testes/unidade/silencio.test.js e o cenario de avisos em testes/audio/offscreen.test.js.
 
 export function criarDetectorSilencio({ limiar = 0.00001, duracaoMs = 10000 } = {}) {
   let inicioSilencio = null;

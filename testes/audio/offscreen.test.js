@@ -268,6 +268,33 @@ test('offscreen: registro sem audio e apagado; a gravacao fica so na memoria, um
   assert.deepEqual(c.registroSemAudio, { naMemoria: 1, noArmazem: [] });
 });
 
+// ---- 4a rodada de revisao (09/11/2026) ----
+
+test('offscreen: inteiro na memoria + salvar falhando de novo: o inteiro continua guardado e salva inteiro', opcoes, () => {
+  const b = c.buracoMemoriaRetentativa;
+  assert.equal(b.naMemoria1, 1);
+  assert.equal(b.situacaoFurada, 'gravando', 'a copia furada tem de ganhar _recuperada se o Chrome fechar');
+  assert.equal(b.naMemoria2, 1);
+  assert.deepEqual(b.avisos, ['nao-salva-memoria']);
+  assert.ok(b.bytesOriginais > 1000, 'original vazio: ' + b.bytesOriginais);
+  assert.equal(b.bytesRecuperados, b.bytesOriginais);
+  assert.deepEqual(b.gravacoesDepois, []);
+});
+
+test('offscreen: marcar falhando nao apaga a copia que ja estava no armazem', opcoes, () => {
+  const m = c.marcarFalhaMantemCopia;
+  assert.equal(m.depois.length, 1);
+  assert.equal(m.depois[0].id, 'existente');
+  assert.equal(m.pedacos, 1);
+});
+
+test('offscreen: descartar o que esta so no armazem, com ele quebrado, da erro e mantem a gravacao', opcoes, () => {
+  const d = c.descartarSoArmazemQuebrado;
+  assert.equal(d.ok, false);
+  assert.equal(d.motivo, 'interno');
+  assert.deepEqual(d.depois, [{ id: 'so-armazem', situacao: 'pendente' }]);
+});
+
 test('offscreen: Parar duplo ao mesmo tempo salva uma vez e manda o outro aguardar', opcoes, () => {
   const p = c.pararDuplo;
   assert.deepEqual(p.respostas.map((r) => (r.ok ? 'ok' : r.motivo)).sort(), ['aguardar', 'ok']);

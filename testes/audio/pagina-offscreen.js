@@ -97,7 +97,17 @@ const trilhas = () => ({
 navigator.permissions.query = async () => ({ state: 'granted' });
 
 // ---------- falhas do IndexedDB sob encomenda ----------
-const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false, tudo: false, pedacoUmaVez: false };
+const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false, tudo: false, pedacoUmaVez: false, substituir: 0 };
+// Falha como a do IndexedDB real: a transacao inteira aborta (nada do que ela fez fica) — 4a rodada
+// de revisao, 09/11/2026: lancar sem abortar deixava passar parte da transacao.
+function falharTransacao(loja, mensagem, nome) {
+  try {
+    loja.transaction.abort();
+  } catch {
+    // ja abortada
+  }
+  throw new DOMException(mensagem, nome);
+}
 // Armazem quebrado de verdade: toda transacao falha (3a rodada de revisao, 09/11/2026).
 const transacaoOriginal = IDBDatabase.prototype.transaction;
 IDBDatabase.prototype.transaction = function (...args) {
@@ -109,7 +119,7 @@ IDBObjectStore.prototype.put = function (...args) {
   if (falhasIdb.putGravacoes && this.name === 'gravacoes') throw new DOMException('falha falsa', 'UnknownError');
   if (falhasIdb.pedacoUmaVez && this.name === 'pedacos') {
     falhasIdb.pedacoUmaVez = false; // uma fatia nao entra na copia (disco cheio por um instante)
-    throw new DOMException('cota estourada (falso)', 'QuotaExceededError');
+    falharTransacao(this, 'cota estourada (falso)', 'QuotaExceededError');
   }
   if (falhasIdb.fecharAbaAoRegistrar && this.name === 'gravacoes') {
     falhasIdb.fecharAbaAoRegistrar = false;
@@ -120,6 +130,11 @@ IDBObjectStore.prototype.put = function (...args) {
 const deleteOriginal = IDBObjectStore.prototype.delete;
 IDBObjectStore.prototype.delete = function (...args) {
   if (falhasIdb.deleteTudo) throw new DOMException('falha falsa', 'UnknownError');
+  // A troca de pedacos (substituirPedacos) comeca apagando os pedacos: falha ali = troca abortada.
+  if (falhasIdb.substituir > 0 && this.name === 'pedacos' && this.transaction.objectStoreNames.length === 1) {
+    falhasIdb.substituir--;
+    falharTransacao(this, 'cota estourada na troca (falso)', 'QuotaExceededError');
+  }
   return deleteOriginal.apply(this, args);
 };
 
@@ -563,6 +578,92 @@ async function registroSemAudio() {
   return { naMemoria, noArmazem };
 }
 
+// ---- 4a rodada de revisao (09/11/2026) ----
+// Disco cheio derrubando tudo junto: buraco na copia, download recusado, troca dos pedacos falhando
+// -> o inteiro vai para a memoria. Salvar da memoria com tudo falhando DE NOVO: o inteiro continua
+// guardado (antes, perdia a marca e era descartado: 27 KB de 52 KB). Depois salva inteiro.
+async function buracoMemoriaRetentativa() {
+  Object.assign(offscreen.AJUSTES, { fatiaMs: 1000 });
+  let bytesOriginais = 0;
+  const recusar = async (msg) => {
+    if (msg.tipo === 'arquivo-pronto' && !bytesOriginais) bytesOriginais = blobs.get(msg.url).size;
+    return msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true };
+  };
+  try {
+    respostaSw = recusar;
+    await enviar(PEDIDO);
+    await espera(1200);
+    falhasIdb.pedacoUmaVez = true; // buraco na copia
+    await espera(3000);
+    falhasIdb.substituir = 1; // a troca dos pedacos falha na hora de guardar a nao salva
+    paraSw = [];
+    await enviar({ tipo: 'parar' });
+    const depois1 = await enviar({ tipo: 'estado' });
+    const situacaoFurada = (await gravacoesNoArmazem())[0];
+    const id = depois1.naMemoria[0] && depois1.naMemoria[0].id;
+    // Salvar da memoria com o download recusado e a troca falhando de novo (o aviso desta segunda
+    // falha tem de continuar "so na memoria"; com o defeito, virava "nao salva" e o inteiro sumia)
+    falhasIdb.substituir = 1;
+    paraSw = [];
+    await enviar({ tipo: 'recuperar', idGravacao: id });
+    const depois2 = await enviar({ tipo: 'estado' });
+    const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
+    // Agora salva de verdade
+    falhasIdb.substituir = 0;
+    swQueSalva();
+    arquivoRecebido = null;
+    await enviar({ tipo: 'recuperar', idGravacao: id });
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    return {
+      naMemoria1: depois1.naMemoria.length,
+      situacaoFurada: situacaoFurada && situacaoFurada.situacao,
+      naMemoria2: depois2.naMemoria.length,
+      avisos,
+      bytesOriginais,
+      bytesRecuperados: recebido ? recebido.blob.size : 0,
+      gravacoesDepois: await gravacoesNoArmazem(),
+    };
+  } finally {
+    falhasIdb.pedacoUmaVez = false;
+    falhasIdb.substituir = 0;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
+}
+
+// Registro existente e o MARCAR falha: a copia continua no armazem (a guarda "registrou" impede
+// apagar um registro que nao foi criado agora).
+async function marcarFalhaMantemCopia() {
+  const banco = await abrirArmazem();
+  await banco.criarGravacao({ id: 'existente', nome: 'Gravacoes de Chamadas/e.m4a', origem: 'Meet', inicio: 5, situacao: 'salvando' });
+  await banco.guardarPedaco('existente', 0, new Blob(['audio existente']));
+  banco.fechar();
+  falhasIdb.putGravacoes = true; // marcar(id, 'pendente') falha
+  await enviar({ tipo: 'falhou-salvar', idGravacao: 'existente' });
+  falhasIdb.putGravacoes = false;
+  const depois = await gravacoesNoArmazem();
+  const limpar = await abrirArmazem();
+  const pedacos = (await limpar.lerPedacos('existente')).length;
+  await limpar.apagarGravacao('existente');
+  limpar.fechar();
+  return { depois, pedacos };
+}
+
+// Descartar gravacao que esta SO no armazem, com o armazem quebrado: erro de verdade, e ela fica.
+async function descartarSoArmazemQuebrado() {
+  const banco = await abrirArmazem();
+  await banco.criarGravacao({ id: 'so-armazem', nome: 'Gravacoes de Chamadas/s.m4a', origem: 'Meet', inicio: 6, situacao: 'pendente' });
+  banco.fechar();
+  falhasIdb.tudo = true;
+  const descartar = await enviar({ tipo: 'descartar', idGravacao: 'so-armazem' });
+  falhasIdb.tudo = false;
+  const depois = await gravacoesNoArmazem();
+  const limpar = await abrirArmazem();
+  await limpar.apagarGravacao('so-armazem');
+  limpar.fechar();
+  return { ok: descartar.ok, motivo: descartar.motivo, depois };
+}
+
 // Parar pedido duas vezes ao mesmo tempo (atalho + clique): um salva, o outro manda aguardar.
 async function pararDuplo() {
   swQueSalva();
@@ -627,6 +728,9 @@ window.rodarCenarios = async () => ({
   armazemQuebradoDoInicioAoFim: await armazemQuebradoDoInicioAoFim(),
   copiaComBuraco: await copiaComBuraco(),
   registroSemAudio: await registroSemAudio(),
+  buracoMemoriaRetentativa: await buracoMemoriaRetentativa(),
+  marcarFalhaMantemCopia: await marcarFalhaMantemCopia(),
+  descartarSoArmazemQuebrado: await descartarSoArmazemQuebrado(),
 });
 
 window.paginaPronta = true;

@@ -284,10 +284,13 @@ async function entregar(idGravacao, meta, arquivo) {
 }
 
 // Onde fica uma gravacao que NAO foi salva. Devolve 'armazem', 'memoria' ou 'nenhuma'.
-// - ja estava no armazem: fica la (mantem "gravando" quando ja era, para o _recuperada do nome); se
-//   a copia tem buraco (copiaIncompleta) e o arquivo inteiro esta na mao, troca os pedacos por ele
-//   (3a rodada de revisao, 09/11/2026: antes, ficava a copia furada e o arquivo inteiro era jogado
-//   fora); se a troca falhar, a copia antiga fica e o arquivo inteiro vai para a memoria;
+// - ja estava no armazem e o arquivo esta na mao: o arquivo SEMPRE substitui os pedacos (numa
+//   transacao so). Ele e sempre o melhor que existe: inteiro (veio da memoria do gravador) ou igual
+//   a copia (veio dela, na recuperacao). 4a rodada de revisao, 09/11/2026: decidir pela marca
+//   copiaIncompleta perdia a marca na segunda tentativa e o inteiro era descartado. Se a troca falhar,
+//   a copia antiga fica, o inteiro vai para a memoria e a copia furada e marcada "gravando" (ganha
+//   _recuperada se o Chrome fechar antes de salvar);
+// - ja estava no armazem, sem arquivo na mao: fica la (mantem "gravando" quando ja era);
 // - nunca foi registrada (gravou sem copia de seguranca): tenta guardar no armazem AGORA (ele pode
 //   ter voltado); se nao der, fica na memoria.
 async function guardarNaoSalva(id, entrega) {
@@ -301,11 +304,12 @@ async function guardarNaoSalva(id, entrega) {
     banco = await armazem();
     const g = await banco.lerGravacao(id);
     if (g) {
-      if (entrega && entrega.copiaIncompleta) {
+      if (entrega) {
         try {
           await banco.substituirPedacos(id, entrega.arquivo);
         } catch (e) {
-          console.error('Gravador: copia furada nao pode ser trocada; o arquivo inteiro fica na memoria', e);
+          console.error('Gravador: a copia nao pode ser trocada pelo arquivo inteiro; ele fica na memoria', e);
+          if (entrega.copiaIncompleta && g.situacao !== 'gravando') await banco.marcar(id, 'gravando').catch(() => {});
           return paraMemoria();
         }
       }

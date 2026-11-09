@@ -31,9 +31,10 @@ automática quando a chamada começa) só depois da validação desta; ver o pla
    service worker anota "endereço → gravação" (lib/downloads.js, uma chave por download no
    `chrome.storage.session`) e salva com `chrome.downloads.download` (lib/nomes.js: nome e opções).
    Download concluído → a gravação é apagada do armazém. Download que falha → fica guardada e aparece
-   em "Gravações não salvas": no armazém (marcada `pendente`; se a cópia tinha buraco, os pedaços são
-   trocados pelo arquivo inteiro numa transação só) ou, se o armazém não funciona, **na memória** do
-   offscreen ("só até fechar o Chrome"). O fim do salvamento **sempre** solta a máquina, mesmo com
+   em "Gravações não salvas": no armazém (marcada `pendente`; com o arquivo na mão, os pedaços são
+   **sempre** trocados por ele numa transação só — ele é inteiro ou igual à cópia) ou, se o armazém
+   não funciona ou a troca falha, **na memória** do offscreen ("só até fechar o Chrome"); a cópia
+   furada que ficou no armazém é marcada para ganhar `_recuperada` se o Chrome fechar antes. O fim do salvamento **sempre** solta a máquina, mesmo com
    falha do armazém.
 
 ### Grafo de áudio (lib/mixer.js)

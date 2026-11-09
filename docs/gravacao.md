@@ -113,6 +113,12 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
   extensão) mostra o erro e recarrega a lista. Ao abrir, mostra e limpa o aviso pendente.
 - Página do microfone: se já estiver aberta, é trazida para a frente (`runtime.getContexts`), em vez
   de abrir mais uma aba a cada clique.
+- **Qual microfone é gravado:** a permissão do Chrome vale para a extensão usar qualquer microfone; o
+  que entra na gravação é o **microfone padrão do Chrome** (o mesmo que o WhatsApp Web usa, salvo
+  escolha dentro da página da chamada). Durante a gravação a janelinha mostra "Microfone: <nome>"
+  (rótulo da trilha que abriu), para o usuário conferir se é o headset (pergunta dele na conferência
+  local de 09/11/2026). Trocar: padrão do Chrome em `chrome://settings/content/microphone` ou padrão
+  do Windows.
 - Mensagens ao usuário: lib/mensagens.js (todo motivo usado no código tem texto — guarda).
 
 ## Mapa de arquivos
@@ -210,7 +216,8 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | [audio.test.js](../testes/audio/audio.test.js) | Chrome real + ffmpeg: AAC estéreo; esquerdo só voz, direito só cliente; alto-falante toca o cliente e nunca a voz; medidores; armazém lento sem órfão; armazém falho não estraga o arquivo; recuperação |
 | [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; microfone e aba fechados depois do Parar; endereço blob liberado; aba fechada no início, no último instante e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida; avisos de microfone e aba mudos; gravação sem cópia de segurança; erro do gravador; recuperação que falha mantém `_recuperada`; Parar duplo |
 | [icone.test.js](../testes/unidade/icone.test.js) | selo, cor e dica do ícone; aviso pendente persiste |
-| (sem teste automático) | service-worker.js e popup.js usam APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): a lógica que dá para separar foi para lib/ (estado, nomes, downloads, icone, mensagens) e é testada; o resto é conferido na conferência local guiada |
+| [popup.test.js](../testes/tela/popup.test.js) | a janelinha de verdade em Chrome real (Chrome da extensão falso injetado antes dos scripts, sob a política do manifest): estilo **calculado** (barras escondidas parado), textos e botões em cada situação, nome do microfone, aviso, recusa como erro, "Gravação salva" mesmo com o download terminando antes da resposta, aviso pendente; confere que o CSS carregou (largura 320 px) para não ficar cego |
+| (sem teste automático) | service-worker.js usa APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): a lógica que dá para separar foi para lib/ (estado, nomes, downloads, icone, mensagens) e é testada; o resto é conferido na conferência local guiada |
 | [guardas.test.js](../testes/guardas/guardas.test.js) | política de segurança exata no manifest; alarme de rede/código de fora em todo arquivo da extensão; permissões exatas; áudio fora do git; sem `_`; motivos com texto; docs sem caminho morto |
 | [instalar.test.js](../testes/unidade/instalar.test.js) | instalador: cópia conferida, recusa apagar pasta alheia, recusa destino no Drive |
 | offscreen.test.js (política) | as páginas de teste rodam sob a mesma política do manifest: a gravação funciona e o Chrome bloqueia conexão de verdade |

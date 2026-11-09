@@ -37,6 +37,7 @@ pasta DEV. Este arquivo só acrescenta o que é deste projeto.
 - `testes/unidade/` — regras puras (nomes, estados, silêncio), no Node.
 - `testes/audio/` — áudio de verdade num Chrome sem cabeça, conferido com ffmpeg/ffprobe.
 - `testes/guardas/` — leem os arquivos: permissões, nada de rede, nada de `_`, docs sem caminho morto.
+- `testes/tela/` — a janelinha de verdade em Chrome sem cabeça, com o Chrome da extensão falso.
 - `ferramentas/` — smoke e gerador dos ícones.
 
 ## Comandos (rodar dentro de `codigo\`)

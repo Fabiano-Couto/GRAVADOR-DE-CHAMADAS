@@ -74,6 +74,8 @@ navigator.mediaDevices.getUserMedia = async (pedido) => {
   if (roteiro.falharMic) throw new DOMException('microfone (falso)', roteiro.falharMic);
   if (roteiro.fecharAbaDuranteMic) fecharAba();
   ultimoMic = fluxoDeTom(440, roteiro.micMudo);
+  // Nome do dispositivo, como o Chrome daria para um microfone de verdade.
+  Object.defineProperty(ultimoMic.getAudioTracks()[0], 'label', { value: 'Microfone de Teste (Headset falso)' });
   return ultimoMic;
 };
 
@@ -135,6 +137,7 @@ async function gravacoesNoArmazem() {
   return lista.map((g) => ({ id: g.id, situacao: g.situacao }));
 }
 const resumoEstado = (e) => ({ estado: e.estado, tabId: e.atual ? e.atual.tabId : null, emEntrega: e.emEntrega, niveis: e.niveis });
+const microfoneInformado = (e) => (e.atual ? e.atual.microfone : null);
 
 // ---------- cenarios ----------
 async function fluxoCompleto() {
@@ -143,7 +146,9 @@ async function fluxoCompleto() {
   paraSw = [];
   const inicio = await enviar(PEDIDO);
   await espera(3500);
-  const gravando = resumoEstado(await enviar({ tipo: 'estado' }));
+  const estadoGravando = await enviar({ tipo: 'estado' });
+  const gravando = resumoEstado(estadoGravando);
+  const microfone = microfoneInformado(estadoGravando);
   const trilhasGravando = trilhas();
   const parar = await enviar({ tipo: 'parar' });
   const trilhasDepoisDoParar = trilhas();
@@ -156,6 +161,7 @@ async function fluxoCompleto() {
   return {
     inicio,
     gravando,
+    microfone,
     trilhasGravando,
     parar,
     trilhasDepoisDoParar,

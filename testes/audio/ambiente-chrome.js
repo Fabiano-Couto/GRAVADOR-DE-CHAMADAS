@@ -11,7 +11,15 @@ import { fileURLToPath } from 'node:url';
 
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CHROME_PADRAO = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const TIPOS = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json' };
+// Tipo certo para cada arquivo: o Chrome recusa folha de estilo servida com outro tipo, e a janelinha
+// rodava no teste SEM CSS (sabotagem de 09/11/2026 mostrou: o teste das barras ficava cego).
+const TIPOS = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json',
+  '.png': 'image/png',
+};
 
 const espera = (ms) => new Promise((resolver) => setTimeout(resolver, ms));
 
@@ -109,7 +117,11 @@ async function esperarPorta(pastaPerfil, limiteMs) {
   throw new Error('o Chrome nao abriu a porta do DevTools a tempo');
 }
 
-export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-teste.html') {
+// opcoes.antes: codigo que roda ANTES de qualquer script da pagina (ex.: o Chrome da extensao falso
+//   para abrir a janelinha de verdade). opcoes.pronta: expressao que fica true quando a pagina esta
+//   pronta para o teste.
+export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-teste.html', opcoes = {}) {
+  const { antes = null, pronta = 'window.paginaPronta === true' } = opcoes;
   const servidor = await iniciarServidor();
   const base = 'http://127.0.0.1:' + servidor.address().port;
   const pastaPerfil = mkdtempSync(path.join(tmpdir(), 'gravador-teste-'));
@@ -124,7 +136,7 @@ export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-tes
       '--autoplay-policy=no-user-gesture-required',
       '--remote-debugging-port=0',
       '--user-data-dir=' + pastaPerfil,
-      base + paginaRelativa,
+      'about:blank',
     ],
     { stdio: 'ignore' },
   );
@@ -158,11 +170,14 @@ export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-tes
     let alvo = null;
     for (let i = 0; i < 100 && !alvo; i++) {
       const lista = await (await fetch(devtools + '/json/list')).json();
-      alvo = lista.find((t) => t.type === 'page' && t.url.startsWith(base));
+      alvo = lista.find((t) => t.type === 'page');
       if (!alvo) await espera(100);
     }
-    if (!alvo) throw new Error('a pagina de teste nao abriu');
+    if (!alvo) throw new Error('o Chrome nao abriu nenhuma pagina');
     const pagina = await conectar(alvo.webSocketDebuggerUrl);
+    await pagina.enviar('Page.enable');
+    if (antes) await pagina.enviar('Page.addScriptToEvaluateOnNewDocument', { source: antes });
+    await pagina.enviar('Page.navigate', { url: base + paginaRelativa });
 
     const avaliar = async (expressao) => {
       const r = await pagina.enviar('Runtime.evaluate', { expression: expressao, awaitPromise: true, returnByValue: true });
@@ -173,14 +188,25 @@ export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-tes
       return r.result.value;
     };
 
-    for (let i = 0; i < 100; i++) {
-      if ((await avaliar('window.paginaPronta === true')) === true) break;
-      await espera(100);
-    }
-    if ((await avaliar('window.paginaPronta === true')) !== true) throw new Error('modulos da pagina de teste nao carregaram');
+    const estaPronta = async () => {
+      try {
+        return (await avaliar(pronta)) === true;
+      } catch {
+        return false; // pagina ainda navegando
+      }
+    };
+    for (let i = 0; i < 100 && !(await estaPronta()); i++) await espera(100);
+    if (!(await estaPronta())) throw new Error('a pagina de teste nao ficou pronta: ' + pronta);
 
     return {
       avaliar,
+      // Abre outra pagina na mesma aba (o codigo de "antes" roda de novo) e espera ficar pronta.
+      navegar: async (relativa) => {
+        await pagina.enviar('Page.navigate', { url: base + relativa });
+        await espera(200);
+        for (let i = 0; i < 100 && !(await estaPronta()); i++) await espera(100);
+        if (!(await estaPronta())) throw new Error('a pagina nao ficou pronta: ' + relativa);
+      },
       encerrar: async () => {
         pagina.fechar();
         await encerrar(navegador);

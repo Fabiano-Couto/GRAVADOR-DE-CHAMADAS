@@ -72,6 +72,12 @@ test('politica de seguranca do manifest: o Chrome bloqueia conexao (ate para o p
   assert.equal(c.politicaBloqueiaConexao.fetchBloqueado, true);
 });
 
+// Pergunta do usuario na conferencia local (09/11/2026): "nao lembro se foi o microfone do
+// computador ou o do headset". A janelinha mostra o nome do microfone que de fato abriu.
+test('offscreen: informa o nome do microfone que esta sendo gravado', opcoes, () => {
+  assert.equal(c.fluxoCompleto.microfone, 'Microfone de Teste (Headset falso)');
+});
+
 test('offscreen: medidores medem cada lado durante a gravacao', opcoes, () => {
   const n = c.fluxoCompleto.gravando.niveis;
   assert.ok(n.voce > 0.25 && n.voce < 0.35, 'voce: ' + n.voce);

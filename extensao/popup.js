@@ -44,6 +44,10 @@ function desenhar(r) {
   ponto.classList.toggle('gravando', r.estado === 'gravando');
   $('cronometro').hidden = !gravandoAqui;
   $('medidores').hidden = !gravandoAqui;
+  // Qual microfone esta entrando na gravacao (o padrao do Chrome): headset ou o do computador.
+  const microfone = gravandoAqui && r.atual.microfone ? r.atual.microfone : '';
+  $('microfone').textContent = microfone ? 'Microfone: ' + microfone : '';
+  $('microfone').hidden = !microfone;
   botao.classList.toggle('parar', gravandoAqui);
 
   if (gravandoAqui) {

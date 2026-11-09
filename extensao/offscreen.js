@@ -46,7 +46,14 @@ function resumo() {
     ok: true,
     estado: maquina.estado,
     atual: sessao
-      ? { id: sessao.id, tabId: sessao.meta.tabId, origem: sessao.meta.origem, nome: sessao.meta.nome, inicio: sessao.meta.inicio }
+      ? {
+          id: sessao.id,
+          tabId: sessao.meta.tabId,
+          origem: sessao.meta.origem,
+          nome: sessao.meta.nome,
+          inicio: sessao.meta.inicio,
+          microfone: sessao.meta.microfone,
+        }
       : null,
     niveis: sessao && maquina.estado === 'gravando' ? sessao.mixer.medir() : null,
     alertas: alertasAtuais(),
@@ -137,7 +144,10 @@ async function iniciar({ streamId, tabId, origem, nome }) {
 
     // 4) gravador. A copia de seguranca (armazem) NAO e pre-requisito: se ela falhar, grava so na
     //    memoria e avisa (revisao de 09/11/2026: antes, IndexedDB com problema impedia gravar).
-    const meta = { id, nome, origem, tabId, inicio: Date.now() };
+    // Nome do microfone aberto (o padrao do Chrome): a janelinha mostra, para o usuario conferir se e
+    // o headset ou o do computador (pergunta do usuario na conferencia local de 09/11/2026).
+    const trilhaMic = mic.getAudioTracks()[0];
+    const meta = { id, nome, origem, tabId, inicio: Date.now(), microfone: (trilhaMic && trilhaMic.label) || '' };
     try {
       banco = await armazem();
     } catch (e) {

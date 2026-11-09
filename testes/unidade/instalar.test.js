@@ -5,7 +5,7 @@
 // Usa so pastas temporarias.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { instalar, impressao } from '../../ferramentas/instalar.js';
@@ -151,6 +151,50 @@ test('instalar: nao apaga pasta do usuario com nome parecido, anterior de outra 
     'Gravador de Chamadas.novo-7-8',
     'Gravador de Chamadas.novo-projeto-do-usuario',
   ]);
+});
+
+// 5a rodada de revisao (09/11/2026): o padrao tem de ser o nome EXATO (caracteres especiais do
+// destino escapados; nada antes nem depois).
+test('instalar: o padrao das sobras e o nome exato (destino com ponto e parenteses; nada antes nem depois)', () => {
+  const especial = path.join(base, 'Extensoes', 'Gravador v1.2 (teste)');
+  plantarInstalacao(path.join(base, 'Extensoes', 'Gravador v1.2 (teste).anterior-3-4'));
+  plantarInstalacao(path.join(base, 'Extensoes', 'Gravador v1X2 (teste).anterior-3-4')); // "." nao e curinga
+  plantarInstalacao(path.join(base, 'Extensoes', 'X Gravador v1.2 (teste).anterior-3-4')); // algo antes
+  plantarInstalacao(path.join(base, 'Extensoes', 'Gravador v1.2 (teste).anterior-3-4.bak')); // algo depois
+  instalar({ origem, destino: especial });
+  assert.deepEqual(readdirSync(path.join(base, 'Extensoes')).sort(), [
+    'Gravador v1.2 (teste)',
+    'Gravador v1.2 (teste).anterior-3-4.bak',
+    'Gravador v1X2 (teste).anterior-3-4',
+    'X Gravador v1.2 (teste).anterior-3-4',
+  ]);
+});
+
+test('instalar: sobra que nao da para ler nao derruba a instalacao que ja deu certo', () => {
+  mkdirSync(irma('Gravador de Chamadas.novo-1-2'), { recursive: true });
+  const estado = (alvo) => {
+    if (alvo.includes('.novo-1-2')) throw new Error('ENOENT falso (atalho quebrado)');
+    return statSync(alvo);
+  };
+  const r = instalar({ origem, destino, operacoes: { estado } });
+  assert.equal(r.arquivos, 2);
+  assert.equal(existsSync(irma('Gravador de Chamadas.novo-1-2')), true);
+});
+
+test('instalar: se a limpeza apagou a anterior que tinha resistido, o aviso nao manda apagar depois', () => {
+  instalar({ origem, destino });
+  versaoNova();
+  let resistiu = false;
+  const apagar = (alvo, opcoes) => {
+    if (alvo.includes('.anterior-') && !resistiu) {
+      resistiu = true; // falha so na primeira vez
+      throw new Error('EPERM falso');
+    }
+    return rmSync(alvo, opcoes);
+  };
+  const r = instalar({ origem, destino, operacoes: { apagar } });
+  assert.equal(r.aviso, null);
+  assert.deepEqual(readdirSync(path.dirname(destino)), ['Gravador de Chamadas']);
 });
 
 test('instalar: com a copia falhando, nao apaga a anterior que ficou de lado (pode ser a unica inteira)', () => {

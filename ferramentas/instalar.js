@@ -76,27 +76,31 @@ function ehInstalacaoDoGravador(pasta) {
 // andamento). Roda so DEPOIS de uma troca bem-sucedida: antes dela, uma .anterior- pode ser a unica
 // instalacao inteira. 4a rodada de revisao, 09/11/2026: antes, apagava qualquer irma com o prefixo
 // (ate backup do usuario) e rodava antes da copia (falha na copia = sem extensao nenhuma).
-function limparSobras(alvo, apagar) {
+// Nenhuma falha aqui derruba a instalacao que acabou de dar certo: sobra que nao da para ler (atalho
+// quebrado, sem permissao) ou apagar fica para a proxima (5a rodada de revisao, 09/11/2026: um stat
+// fora do try fazia o instalador dizer "NAO instalado" depois de instalar).
+function limparSobras(alvo, apagar, estado) {
   const pasta = path.dirname(alvo);
   const padrao = new RegExp('^' + escaparRegex(path.basename(alvo)) + '\\.(novo|anterior)-\\d+-\\d+$');
   for (const nome of readdirSync(pasta)) {
     const achado = nome.match(padrao);
     if (!achado) continue;
     const sobra = path.join(pasta, nome);
-    const pode = achado[1] === 'anterior' ? ehInstalacaoDoGravador(sobra) : Date.now() - statSync(sobra).mtimeMs > UMA_HORA;
-    if (!pode) continue;
     try {
-      apagar(sobra, { recursive: true, force: true });
+      const pode = achado[1] === 'anterior' ? ehInstalacaoDoGravador(sobra) : Date.now() - estado(sobra).mtimeMs > UMA_HORA;
+      if (pode) apagar(sobra, { recursive: true, force: true });
     } catch {
-      // sobra presa: fica para a proxima
+      // sobra ilegivel ou presa: fica para a proxima
     }
   }
 }
 
-// operacoes: renomear/apagar trocaveis so para o teste simular arquivo preso (antivirus, indexador).
+// operacoes: renomear/apagar/estado trocaveis so para o teste simular arquivo preso (antivirus,
+// indexador) ou ilegivel.
 export function instalar({ origem, destino, operacoes = {} }) {
   const renomear = operacoes.renomear || renameSync;
   const apagar = operacoes.apagar || rmSync;
+  const estado = operacoes.estado || statSync;
   const alvo = path.resolve(destino);
   if (dentroDePastaSincronizada(alvo)) {
     throw new Error('o destino fica dentro de uma pasta sincronizada (Google Drive, OneDrive, Dropbox, iCloud): ' + alvo);
@@ -171,7 +175,8 @@ export function instalar({ origem, destino, operacoes = {} }) {
       aviso = 'a instalacao anterior ficou em ' + anterior + ' (apague depois; a nova ja esta no lugar)';
     }
   }
-  limparSobras(alvo, apagar); // so agora: a troca deu certo
+  limparSobras(alvo, apagar, estado); // so agora: a troca deu certo
+  if (aviso && !existsSync(anterior)) aviso = null; // a limpeza conseguiu apagar a anterior
   const noDestino = impressao(alvo);
   const assinatura = createHash('sha256').update(JSON.stringify(noDestino)).digest('hex').slice(0, 12);
   return { destino: alvo, arquivos: noDestino.length, assinatura, aviso };

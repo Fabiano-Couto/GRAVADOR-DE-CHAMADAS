@@ -1,14 +1,19 @@
 // Guardas — Gravador v1, 09/11/2026. Leem os arquivos do projeto e listam os culpados.
 // Regras que nao podem voltar, rodando ou nao o caminho do codigo:
-// - nada sai do computador: a extensao nao usa rede nem codigo de fora (gravacao tem voz e dado de
-//   cliente — LGPD);
+// - nada sai do computador. A BARREIRA e a politica de seguranca do manifest (connect-src 'none':
+//   o proprio Chrome bloqueia qualquer conexao das paginas da extensao); a guarda de texto abaixo e
+//   um alarme contra descuido, nao contra codigo malicioso escrito para escapar dela (revisao de
+//   seguranca de 09/11/2026 provou 10 formas que escapavam da versao anterior);
+// - gravacao de audio nunca entra no git (voz e dado de cliente — LGPD);
 // - permissoes do manifest sao exatamente a lista aprovada (permissao nova = decisao do usuario);
 // - nenhum arquivo ou pasta da extensao comeca com "_" (o Chrome recusa carregar a extensao);
 // - todo motivo de erro usado no codigo tem mensagem para o usuario;
 // - a documentacao nao cita caminho que nao existe e cobre todo arquivo de lib/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MOTIVOS } from '../../extensao/lib/mensagens.js';
@@ -29,8 +34,16 @@ function listar(pasta) {
 
 const rel = (arquivo) => path.relative(RAIZ, arquivo).split(path.sep).join('/');
 const texto = (arquivo) => readFileSync(arquivo, 'utf8');
-const codigoDaExtensao = () => listar(EXT).filter((f) => /\.(js|html|css|json)$/.test(f));
+// Todo arquivo de texto da pasta, qualquer que seja a extensao do nome (.mjs, .svg, .htm...):
+// so os PNG dos icones ficam de fora.
+const arquivosDeTexto = (pasta) => listar(pasta).filter((f) => !f.endsWith('.png'));
 const manifest = () => JSON.parse(texto(path.join(EXT, 'manifest.json')));
+
+// A barreira de verdade: o Chrome aplica esta politica a todas as paginas da extensao (janelinha,
+// offscreen, permissao, service worker). connect-src 'none' bloqueia fetch, XHR, WebSocket,
+// EventSource e sendBeacon; script-src 'self' bloqueia script de fora e eval.
+const CSP_APROVADA =
+  "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'";
 
 test('guarda: permissoes do manifest sao exatamente as aprovadas', () => {
   const m = manifest();
@@ -42,9 +55,23 @@ test('guarda: permissoes do manifest sao exatamente as aprovadas', () => {
     'content_scripts',
     'externally_connectable',
     'web_accessible_resources',
-    'content_security_policy',
+    'sandbox',
   ].filter((chave) => m[chave] !== undefined);
   assert.deepEqual(naoAprovadas, []);
+});
+
+test('guarda: o manifest tem a politica de seguranca que bloqueia qualquer conexao', () => {
+  assert.deepEqual(manifest().content_security_policy, { extension_pages: CSP_APROVADA });
+});
+
+test('guarda: gravacao de audio nunca entra no git', () => {
+  const ignorados = texto(path.join(RAIZ, '.gitignore')).split(/\r?\n/).map((l) => l.trim());
+  const AUDIO = ['m4a', 'mp4', 'webm', 'ogg', 'opus', 'wav', 'mp3', 'aac', 'flac', 'wma', 'amr', 'm4b', '3gp'];
+  assert.deepEqual(AUDIO.filter((ext) => !ignorados.includes('*.' + ext)), []);
+  const r = spawnSync('git', ['ls-files'], { cwd: RAIZ, encoding: 'utf8' });
+  assert.equal(r.status, 0, 'git ls-files falhou');
+  const versionados = r.stdout.split('\n').filter((f) => new RegExp('\\.(' + AUDIO.join('|') + ')$', 'i').test(f));
+  assert.deepEqual(versionados, []);
 });
 
 test('guarda: o atalho combinado e Alt+Shift+G', () => {
@@ -63,18 +90,62 @@ const PROIBIDOS = [
   [/\b(src|href)\s*=\s*["']\s*(https?:)?\/\//i, 'recurso de fora'],
   [/\bimport\b[^;]*["']https?:/, 'import de fora'],
   [/url\(\s*["']?https?:/i, 'url() de fora'],
+  [/https?:\/\//i, 'endereco http escrito no codigo'],
+  [/RTCPeerConnection/, 'RTCPeerConnection'],
+  [/WebTransport/, 'WebTransport'],
+  [/\.share\s*\(/, 'navigator.share'],
+  [/sendNativeMessage|connectNative/, 'mensagem nativa'],
+  [/runtime\.connect\s*\(/, 'runtime.connect'],
+  [/sendMessage\s*\(\s*["'`]/, 'mensagem para outra extensao'],
+  [/new\s+Image\b/, 'new Image'],
+  [/\.src\s*=/, 'atribuicao de src'],
+  [/location\.(assign|replace|href)/, 'navegacao por location'],
+  [/window\.open\s*\(/, 'window.open'],
 ];
 
-test('guarda: nenhum codigo da extensao usa rede ou codigo de fora', () => {
+function culpadosDeRede(pasta) {
   const culpados = [];
-  for (const arquivo of codigoDaExtensao()) {
+  for (const arquivo of arquivosDeTexto(pasta)) {
     texto(arquivo)
       .split('\n')
       .forEach((linha, i) => {
-        for (const [regra, nome] of PROIBIDOS) if (regra.test(linha)) culpados.push(rel(arquivo) + ':' + (i + 1) + ' ' + nome);
+        for (const [regra, nome] of PROIBIDOS) {
+          if (regra.test(linha)) culpados.push(path.relative(pasta, arquivo).split(path.sep).join('/') + ':' + (i + 1) + ' ' + nome);
+        }
       });
   }
-  assert.deepEqual(culpados, []);
+  return culpados;
+}
+
+test('guarda: nenhum codigo da extensao usa rede ou codigo de fora', () => {
+  assert.deepEqual(culpadosDeRede(EXT), []);
+});
+
+// Autoteste da guarda (revisao de seguranca de 09/11/2026: a versao anterior so lia .js/.html/
+// .css/.json e deixou passar 10 formas reais). Uma pasta plantada com cada forma tem de dar alarme.
+// Formas que um alarme de texto nao pega (nome montado em pedacos, escape unicode, quebra de linha
+// antes do parentese) ficam para a politica de seguranca do manifest — que bloqueia de verdade.
+test('guarda (autoteste): o alarme le todo tipo de arquivo e reconhece cada forma de rede', () => {
+  const pasta = mkdtempSync(path.join(tmpdir(), 'gravador-guarda-'));
+  try {
+    const plantas = {
+      'a.mjs': "fetch('/x');",
+      'b.svg': '<script href="https://exemplo.invalid/x.js"></script>',
+      'c.htm': "new RTCPeerConnection({});",
+      'd.txt': "new WebTransport('/x');",
+      'e.js': "chrome.tabs.create({ url: 'https://exemplo.invalid/?d=1' });",
+      'f.js': "chrome.runtime.sendMessage('outra-extensao', {});",
+      'g.js': 'const i = new Image();',
+      'h.js': 'imagem.src = destino;',
+      'i.js': "location.assign('/x');",
+      'j.js': 'navigator.share({});',
+    };
+    for (const [nome, conteudo] of Object.entries(plantas)) writeFileSync(path.join(pasta, nome), conteudo + '\n');
+    const achados = new Set(culpadosDeRede(pasta).map((c) => c.split(':')[0]));
+    assert.deepEqual([...achados].sort(), Object.keys(plantas).sort());
+  } finally {
+    rmSync(pasta, { recursive: true, force: true });
+  }
 });
 
 test('guarda: nenhum arquivo ou pasta da extensao comeca com sublinhado', () => {

@@ -9,7 +9,9 @@
 // - falha do IndexedDB depois do Parar: a maquina ficava presa em "salvando" e nada mais gravava;
 // - download recusado: a copia de seguranca tem de ficar (pendente) e poder ser salva depois;
 // - conclusao de gravacao que o offscreen nao conhece (recriado no meio do download): "salvo" nao
-//   apagava a copia e ela voltava na lista, gerando arquivo duplicado.
+//   apagava a copia e ela voltava na lista, gerando arquivo duplicado;
+// - (revisao de seguranca) microfone e captura da aba abertos depois do Parar; endereco blob da
+//   gravacao nunca liberado; politica de seguranca que nao bloqueia conexao de verdade.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -52,6 +54,22 @@ test('offscreen: fluxo inteiro iniciar > gravando > parar > entregue > salvo > p
   assert.deepEqual(f.fim, { estado: 'parado', tabId: null, emEntrega: [], niveis: null });
   assert.deepEqual(f.gravacoesDepois, []);
   assert.deepEqual(f.estadosAvisados, ['iniciando', 'gravando', 'salvando', 'parado']);
+});
+
+test('offscreen: depois do Parar o microfone e a captura da aba estao fechados', opcoes, () => {
+  const f = c.fluxoCompleto;
+  assert.deepEqual(f.trilhasGravando, { aba: 'live', mic: 'live' });
+  assert.deepEqual(f.trilhasDepoisDoParar, { aba: 'ended', mic: 'ended' });
+  assert.equal(c.abaFechadaGravando.micDepois, 'ended');
+});
+
+test('offscreen: o endereco blob so e liberado quando o salvamento termina', opcoes, () => {
+  assert.equal(c.fluxoCompleto.revogadoAntesDoSalvo, false);
+  assert.equal(c.fluxoCompleto.revogadoDepoisDoSalvo, true);
+});
+
+test('politica de seguranca do manifest: o Chrome bloqueia conexao (ate para o proprio servidor)', opcoes, () => {
+  assert.equal(c.politicaBloqueiaConexao.fetchBloqueado, true);
 });
 
 test('offscreen: medidores medem cada lado durante a gravacao', opcoes, () => {

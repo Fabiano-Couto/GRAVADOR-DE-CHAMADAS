@@ -5,6 +5,9 @@
   "description": "Grava o áudio de chamadas do WhatsApp Web e do Google Meet: a sua voz e a do cliente, em canais separados.",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "tabCapture", "offscreen", "downloads", "storage"],
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; connect-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'"
+  },
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

@@ -6,7 +6,31 @@
 // uma leitura-e-regravacao de mapa unico realmente se atropele.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { anotarSalvamento, retirarSalvamento } from '../../extensao/lib/downloads.js';
+import { anotarSalvamento, retirarSalvamento, arquivoAceito } from '../../extensao/lib/downloads.js';
+
+const ORIGEM = 'chrome-extension://abcdefghijklmnop/';
+const BLOB = 'blob:chrome-extension://abcdefghijklmnop/1b4e28ba-2fa1-11d2-883f-0016d3cca427';
+const NOME = 'Gravacoes de Chamadas/2026-11-09_14h30_WhatsApp.m4a';
+
+// Achado da revisao de seguranca (09/11/2026): o service worker baixava qualquer endereco e nome
+// que chegassem por mensagem. So pode baixar blob da propria extensao, para a pasta das gravacoes.
+test('downloads: aceita o blob da propria extensao com o nome da pasta das gravacoes', () => {
+  assert.equal(arquivoAceito(BLOB, NOME, ORIGEM), true);
+});
+
+test('downloads: recusa endereco que nao e blob da propria extensao', () => {
+  assert.equal(arquivoAceito('https://exemplo.invalid/a.m4a', NOME, ORIGEM), false);
+  assert.equal(arquivoAceito('blob:chrome-extension://outraextensao/1b4e', NOME, ORIGEM), false);
+  assert.equal(arquivoAceito('blob:https://web.whatsapp.com/1b4e', NOME, ORIGEM), false);
+});
+
+test('downloads: recusa nome fora da pasta, com subpasta, oculto ou sem .m4a', () => {
+  assert.equal(arquivoAceito(BLOB, 'outra/2026-11-09_14h30_WhatsApp.m4a', ORIGEM), false);
+  assert.equal(arquivoAceito(BLOB, 'Gravacoes de Chamadas/../x.m4a', ORIGEM), false);
+  assert.equal(arquivoAceito(BLOB, 'Gravacoes de Chamadas/a\\b.m4a', ORIGEM), false);
+  assert.equal(arquivoAceito(BLOB, 'Gravacoes de Chamadas/.m4a', ORIGEM), false);
+  assert.equal(arquivoAceito(BLOB, 'Gravacoes de Chamadas/x.exe', ORIGEM), false);
+});
 
 function armazenamentoFalso() {
   const dados = {};

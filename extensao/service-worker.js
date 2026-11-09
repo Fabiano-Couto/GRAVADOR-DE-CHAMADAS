@@ -5,7 +5,7 @@ import { origemDaUrl, nomeArquivo, opcoesDownload } from './lib/nomes.js';
 import { decidirAlternar, gravacoesParaRecuperar } from './lib/estado.js';
 import { abrirArmazem } from './lib/armazem.js';
 import { textoDoMotivo } from './lib/mensagens.js';
-import { anotarSalvamento, retirarSalvamento } from './lib/downloads.js';
+import { anotarSalvamento, retirarSalvamento, arquivoAceito } from './lib/downloads.js';
 
 const COR_GRAVANDO = '#D93025';
 const COR_ALERTA = '#E37400';
@@ -70,7 +70,12 @@ const INTERNAS = ['chrome://', 'chrome-extension://', 'chrome-untrusted://', 'de
 
 function paginaInterna(url) {
   if (!url) return false; // sem endereco (nao deveria acontecer com activeTab): a captura diz se pode
-  return INTERNAS.some((p) => url.startsWith(p)) || url.startsWith('https://chromewebstore.google.com/');
+  if (INTERNAS.some((p) => url.startsWith(p))) return true;
+  try {
+    return new URL(url).hostname === 'chromewebstore.google.com'; // a loja nao pode ser capturada
+  } catch {
+    return false;
+  }
 }
 
 async function alternar(aba) {
@@ -125,6 +130,9 @@ async function recuperaveis() {
 // ---------- salvar em Downloads ----------
 
 async function salvarArquivo({ idGravacao, url, nome }) {
+  if (!arquivoAceito(url, nome, chrome.runtime.getURL(''))) {
+    return { ok: false, motivo: 'salvar', detalhe: 'endereço ou nome de arquivo recusado' };
+  }
   await anotarSalvamento(chrome.storage.session, url, { idGravacao, nome });
   try {
     await chrome.downloads.download(opcoesDownload(url, nome));

@@ -12,6 +12,22 @@ const paraBase64 = (blob) =>
     leitor.readAsDataURL(blob);
   });
 
+// ---------- enderecos blob: guarda o arquivo de cada um e anota os revogados ----------
+// (a pagina roda sob a politica da extensao, connect-src 'none': nao da para ler o blob com fetch)
+const blobs = new Map();
+const revogados = new Set();
+const criarUrlOriginal = URL.createObjectURL.bind(URL);
+const revogarUrlOriginal = URL.revokeObjectURL.bind(URL);
+URL.createObjectURL = (blob) => {
+  const url = criarUrlOriginal(blob);
+  blobs.set(url, blob);
+  return url;
+};
+URL.revokeObjectURL = (url) => {
+  revogados.add(url);
+  revogarUrlOriginal(url);
+};
+
 // ---------- chrome.runtime falso ----------
 const ouvintes = [];
 let paraSw = [];
@@ -34,6 +50,7 @@ function enviar(msg) {
 // ---------- captura da aba e microfone falsos ----------
 const ctxFontes = new AudioContext({ sampleRate: 48000 });
 let ultimaAba = null;
+let ultimoMic = null;
 const roteiro = { fecharAbaDuranteMic: false, falharMic: null };
 function fluxoDeTom(frequencia) {
   const oscilador = new OscillatorNode(ctxFontes, { frequency: frequencia });
@@ -56,8 +73,15 @@ navigator.mediaDevices.getUserMedia = async (pedido) => {
   }
   if (roteiro.falharMic) throw new DOMException('microfone (falso)', roteiro.falharMic);
   if (roteiro.fecharAbaDuranteMic) fecharAba();
-  return fluxoDeTom(440);
+  ultimoMic = fluxoDeTom(440);
+  return ultimoMic;
 };
+// Microfone e captura da aba fechados de verdade (achado da revisao de seguranca de 09/11/2026:
+// nada conferia isso depois do Parar).
+const trilhas = () => ({
+  aba: ultimaAba ? ultimaAba.getAudioTracks()[0].readyState : null,
+  mic: ultimoMic ? ultimoMic.getAudioTracks()[0].readyState : null,
+});
 navigator.permissions.query = async () => ({ state: 'granted' });
 
 // ---------- falhas do IndexedDB sob encomenda ----------
@@ -80,7 +104,7 @@ const PEDIDO = { tipo: 'iniciar', streamId: 'id-falso', tabId: 7, origem: 'Whats
 let arquivoRecebido = null;
 function swQueSalva() {
   respostaSw = async (msg) => {
-    if (msg.tipo === 'arquivo-pronto') arquivoRecebido = { ...msg, blob: await (await fetch(msg.url)).blob() };
+    if (msg.tipo === 'arquivo-pronto') arquivoRecebido = { ...msg, blob: blobs.get(msg.url) };
     return { ok: true };
   };
 }
@@ -105,16 +129,23 @@ async function fluxoCompleto() {
   const inicio = await enviar(PEDIDO);
   await espera(2500);
   const gravando = resumoEstado(await enviar({ tipo: 'estado' }));
+  const trilhasGravando = trilhas();
   const parar = await enviar({ tipo: 'parar' });
+  const trilhasDepoisDoParar = trilhas();
   const recebido = await esperarArquivo();
   const salvando = resumoEstado(await enviar({ tipo: 'estado' }));
   const situacaoAntes = await gravacoesNoArmazem();
+  const revogadoAntesDoSalvo = revogados.has(recebido.url);
   await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
   const fim = resumoEstado(await enviar({ tipo: 'estado' }));
   return {
     inicio,
     gravando,
+    trilhasGravando,
     parar,
+    trilhasDepoisDoParar,
+    revogadoAntesDoSalvo,
+    revogadoDepoisDoSalvo: revogados.has(recebido.url),
     salvando,
     idGravacao: recebido.idGravacao,
     nomeEntregue: recebido.nome,
@@ -143,7 +174,24 @@ async function abaFechadaGravando() {
   fecharAba();
   const recebido = await esperarArquivo();
   if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
-  return { recebeuArquivo: Boolean(recebido), fim: resumoEstado(await enviar({ tipo: 'estado' })), gravacoes: await gravacoesNoArmazem() };
+  return {
+    recebeuArquivo: Boolean(recebido),
+    micDepois: trilhas().mic,
+    fim: resumoEstado(await enviar({ tipo: 'estado' })),
+    gravacoes: await gravacoesNoArmazem(),
+  };
+}
+
+// A politica de seguranca da extensao (mandada pelo servidor de teste igual ao manifest) bloqueia
+// conexao de verdade no Chrome — ate para o proprio servidor.
+async function politicaBloqueiaConexao() {
+  let fetchBloqueado = false;
+  try {
+    await fetch('/extensao/manifest.json');
+  } catch {
+    fetchBloqueado = true;
+  }
+  return { fetchBloqueado };
 }
 
 async function microfoneNegado() {
@@ -219,6 +267,7 @@ window.rodarCenarios = async () => ({
   armazemFalhandoAoParar: await armazemFalhandoAoParar(),
   swRecusaEDepoisRecupera: await swRecusaEDepoisRecupera(),
   conclusaoDeGravacaoDesconhecida: await conclusaoDeGravacaoDesconhecida(),
+  politicaBloqueiaConexao: await politicaBloqueiaConexao(),
 });
 
 window.paginaPronta = true;

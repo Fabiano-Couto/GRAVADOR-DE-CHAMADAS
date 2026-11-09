@@ -29,7 +29,15 @@ export function ferramentaQueFalta() {
   return null;
 }
 
+// As paginas de teste rodam sob a MESMA politica de seguranca do manifest da extensao: prova que a
+// gravacao funciona com ela e que ela bloqueia conexao de verdade no Chrome.
+function cspDaExtensao() {
+  const manifest = JSON.parse(readFileSync(path.join(RAIZ, 'extensao', 'manifest.json'), 'utf8'));
+  return manifest.content_security_policy.extension_pages;
+}
+
 function iniciarServidor() {
+  const csp = cspDaExtensao();
   const servidor = createServer(async (req, res) => {
     try {
       const pedido = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname);
@@ -39,7 +47,9 @@ function iniciarServidor() {
         return;
       }
       const corpo = await readFile(arquivo);
-      res.writeHead(200, { 'Content-Type': TIPOS[path.extname(arquivo)] || 'application/octet-stream' });
+      const cabecalhos = { 'Content-Type': TIPOS[path.extname(arquivo)] || 'application/octet-stream' };
+      if (arquivo.endsWith('.html')) cabecalhos['Content-Security-Policy'] = csp;
+      res.writeHead(200, cabecalhos);
       res.end(corpo);
     } catch {
       res.writeHead(404).end();

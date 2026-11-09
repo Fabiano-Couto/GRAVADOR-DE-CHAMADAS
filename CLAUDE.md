@@ -50,14 +50,19 @@ pasta DEV. Este arquivo só acrescenta o que é deste projeto.
   pasta temporária.
 - Sintaxe de arquivo tocado: `node --check <arquivo>`.
 - Ícones: `node ferramentas/gerar-icones.js` (regrava `extensao/icones/*.png`).
-- Ambiente local = o Chrome do usuário: `chrome://extensions` → recarregar a extensão (↻) depois de
-  mudar código. Depurar: "Inspecionar visualizações" → service worker / offscreen.html.
+- Instalar/atualizar no Chrome do usuário: `node ferramentas/instalar.js` (copia para
+  `C:\Extensoes\Gravador de Chamadas`, recusa código não commitado) → `chrome://extensions` →
+  recarregar (↻). Depurar: "Inspecionar visualizações" → service worker / offscreen.html.
 
 ## Regras de ouro (não quebrar sem decisão do usuário)
 
-- **Nada sai do computador.** A extensão não usa rede (fetch, XMLHttpRequest, WebSocket, sendBeacon,
-  EventSource, script de fora). Guarda: `testes/guardas/guardas.test.js`. Gravação tem voz e dado de
-  cliente (LGPD).
+- **Nada sai do computador.** A barreira é a política de segurança do manifest
+  (`content_security_policy`, com `connect-src 'none'`): o Chrome bloqueia qualquer conexão das
+  páginas da extensão. A guarda `testes/guardas/guardas.test.js` exige essa política exata e é um
+  alarme de texto contra descuido (rede, código de fora) — não segura código escrito para escapar
+  dela. Gravação tem voz e dado de cliente (LGPD).
+- **O Chrome carrega a extensão de `C:\Extensoes\Gravador de Chamadas`**, nunca da pasta do Drive
+  (decisão do usuário, 09/11/2026). Atualizar = `node ferramentas/instalar.js` + recarregar.
 - **Permissões mínimas, lista fechada** no manifest (a guarda confere a lista exata). Permissão nova é
   decisão do usuário.
 - **Canal esquerdo = microfone (você), direito = aba (cliente).** Decisão do usuário, 09/11/2026.

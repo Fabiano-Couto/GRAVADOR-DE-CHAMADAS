@@ -120,7 +120,9 @@ na implementação (09/11/2026) — o plano falava em "um canal"; registrado no 
 | Esquerdo = microfone, direito = aba | separar quem falou o quê; permite transcrição por lado | usuário, 09/11/2026 |
 | Salvar em Downloads > Gravacoes de Chamadas, sem perguntar e sem sobrescrever | automático, nada se perde | usuário, 09/11/2026 |
 | M4A/AAC | abre em qualquer player e no celular; nativo no Chrome | Claude, avisado no chat, 09/11/2026 |
-| Nada sai do computador (sem rede, sem código de fora) | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026 |
+| Nada sai do computador. **Barreira:** política de segurança do manifest (`connect-src 'none'`, `script-src 'self'`) — o próprio Chrome bloqueia qualquer conexão das páginas da extensão. **Alarme:** a guarda de texto (contra descuido; não segura código escrito para escapar dela) | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026; barreira pela revisão de segurança, 09/11/2026 |
+| O service worker só baixa blob da própria extensão, para a pasta das gravações, nome simples `.m4a` (`arquivoAceito`, lib/downloads.js) | é a única linha em que valor vindo de mensagem vira arquivo no disco | revisão de segurança, 09/11/2026 |
+| O Chrome carrega a extensão de `C:\Extensoes\Gravador de Chamadas` (fora do Drive), preenchida por [instalar.js](../ferramentas/instalar.js) | código com microfone liberado não pode ser o da pasta sincronizada | usuário, 09/11/2026 (revisão de segurança) |
 | Permissões mínimas e lista fechada | idem | plano aprovado; `activeTab` acrescentada na implementação para ler o endereço da aba (nome do arquivo) |
 | Grava o microfone direto, mesmo com o usuário no mudo da chamada | etapa 1 não lê o mudo da página | comportamento conhecido, avisado no plano |
 
@@ -173,5 +175,7 @@ na implementação (09/11/2026) — o plano falava em "um canal"; registrado no 
 | [audio.test.js](../testes/audio/audio.test.js) | Chrome real + ffmpeg: AAC estéreo; esquerdo só voz, direito só cliente; alto-falante toca o cliente e nunca a voz; medidores; armazém lento sem órfão; armazém falho não estraga o arquivo; recuperação |
 | [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; aba fechada no início e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida |
 | (sem teste automático) | service-worker.js e popup.js usam APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): conferidos na conferência local guiada |
-| [guardas.test.js](../testes/guardas/guardas.test.js) | sem rede, permissões exatas, sem `_`, motivos com texto, docs sem caminho morto |
+| [guardas.test.js](../testes/guardas/guardas.test.js) | política de segurança exata no manifest; alarme de rede/código de fora em todo arquivo da extensão; permissões exatas; áudio fora do git; sem `_`; motivos com texto; docs sem caminho morto |
+| [instalar.test.js](../testes/unidade/instalar.test.js) | instalador: cópia conferida, recusa apagar pasta alheia, recusa destino no Drive |
+| offscreen.test.js (política) | as páginas de teste rodam sob a mesma política do manifest: a gravação funciona e o Chrome bloqueia conexão de verdade |
 | [smoke.js](../ferramentas/smoke.js) | sintaxe, manifest e arquivos citados; controle que tem de falhar |

@@ -5,7 +5,7 @@
 // Usa so pastas temporarias.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { instalar, impressao } from '../../ferramentas/instalar.js';
@@ -117,12 +117,46 @@ test('instalar: anterior nao se deixa apagar: a nova ja esta no lugar e o aviso 
   assert.match(r.aviso, /a instalacao anterior ficou em .*Gravador de Chamadas\.anterior-/);
 });
 
-test('instalar: limpa sobras de execucoes anteriores interrompidas', () => {
-  mkdirSync(path.join(path.dirname(destino), 'Gravador de Chamadas.novo-1-2'), { recursive: true });
-  mkdirSync(path.join(path.dirname(destino), 'Gravador de Chamadas.anterior-3-4'), { recursive: true });
-  mkdirSync(path.join(path.dirname(destino), 'Outra Coisa'), { recursive: true });
+// 4a rodada de revisao (09/11/2026): a limpeza apagava qualquer irma com o prefixo (ate backup do
+// usuario) e rodava antes da copia (falha na copia depois de uma troca falha = sem extensao).
+const irma = (nome) => path.join(path.dirname(destino), nome);
+const plantarInstalacao = (pasta, nome = 'Gravador de Chamadas') => {
+  mkdirSync(pasta, { recursive: true });
+  writeFileSync(path.join(pasta, 'manifest.json'), JSON.stringify({ name: nome }));
+};
+const envelhecer = (pasta) => {
+  const duasHorasAtras = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  utimesSync(pasta, duasHorasAtras, duasHorasAtras);
+};
+
+test('instalar: limpa so as sobras com o nome exato que ele gera (anterior do Gravador, temporaria velha)', () => {
+  plantarInstalacao(irma('Gravador de Chamadas.anterior-3-4'));
+  mkdirSync(irma('Gravador de Chamadas.novo-1-2'), { recursive: true });
+  envelhecer(irma('Gravador de Chamadas.novo-1-2'));
+  mkdirSync(irma('Outra Coisa'), { recursive: true });
   instalar({ origem, destino });
   assert.deepEqual(readdirSync(path.dirname(destino)).sort(), ['Gravador de Chamadas', 'Outra Coisa']);
+});
+
+test('instalar: nao apaga pasta do usuario com nome parecido, anterior de outra extensao nem temporaria recente', () => {
+  plantarInstalacao(irma('Gravador de Chamadas.anterior-backup-manual'));
+  mkdirSync(irma('Gravador de Chamadas.novo-projeto-do-usuario'), { recursive: true });
+  plantarInstalacao(irma('Gravador de Chamadas.anterior-5-6'), 'Outra Extensao');
+  mkdirSync(irma('Gravador de Chamadas.novo-7-8'), { recursive: true }); // recente: outra execucao em andamento
+  instalar({ origem, destino });
+  assert.deepEqual(readdirSync(path.dirname(destino)).sort(), [
+    'Gravador de Chamadas',
+    'Gravador de Chamadas.anterior-5-6',
+    'Gravador de Chamadas.anterior-backup-manual',
+    'Gravador de Chamadas.novo-7-8',
+    'Gravador de Chamadas.novo-projeto-do-usuario',
+  ]);
+});
+
+test('instalar: com a copia falhando, nao apaga a anterior que ficou de lado (pode ser a unica inteira)', () => {
+  plantarInstalacao(irma('Gravador de Chamadas.anterior-3-4'));
+  assert.throws(() => instalar({ origem: path.join(base, 'nao-existe'), destino }));
+  assert.equal(existsSync(path.join(irma('Gravador de Chamadas.anterior-3-4'), 'manifest.json')), true);
 });
 
 test('instalar: nao deixa pasta temporaria para tras', () => {

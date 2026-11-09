@@ -8,7 +8,7 @@
 //   recusa se extensao/ tem mudanca nao commitada (--forcar ignora, para teste local)
 // Depois: chrome://extensions -> Gravador de Chamadas -> recarregar.
 // Testes: testes/unidade/instalar.test.js.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -59,18 +59,36 @@ function dentroDeRepositorioGit(caminho) {
   }
 }
 
-// Sobras de execucoes anteriores interrompidas (pastas irmas .novo-* e .anterior-* do proprio alvo).
+const UMA_HORA = 60 * 60 * 1000;
+const escaparRegex = (texto) => texto.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function ehInstalacaoDoGravador(pasta) {
+  try {
+    return JSON.parse(readFileSync(path.join(pasta, 'manifest.json'), 'utf8')).name === NOME_DA_EXTENSAO;
+  } catch {
+    return false;
+  }
+}
+
+// Sobras de execucoes anteriores interrompidas: so as pastas irmas com o nome EXATO que o instalador
+// gera (<alvo>.novo-<pid>-<hora> / <alvo>.anterior-<pid>-<hora>). Uma .anterior- so sai se for
+// instalacao do Gravador; uma .novo- so se tiver mais de 1 hora (pode ser de outra execucao em
+// andamento). Roda so DEPOIS de uma troca bem-sucedida: antes dela, uma .anterior- pode ser a unica
+// instalacao inteira. 4a rodada de revisao, 09/11/2026: antes, apagava qualquer irma com o prefixo
+// (ate backup do usuario) e rodava antes da copia (falha na copia = sem extensao nenhuma).
 function limparSobras(alvo, apagar) {
   const pasta = path.dirname(alvo);
-  if (!existsSync(pasta)) return;
-  const base = path.basename(alvo);
+  const padrao = new RegExp('^' + escaparRegex(path.basename(alvo)) + '\\.(novo|anterior)-\\d+-\\d+$');
   for (const nome of readdirSync(pasta)) {
-    if (nome.startsWith(base + '.novo-') || nome.startsWith(base + '.anterior-')) {
-      try {
-        apagar(path.join(pasta, nome), { recursive: true, force: true });
-      } catch {
-        // sobra presa: fica para a proxima
-      }
+    const achado = nome.match(padrao);
+    if (!achado) continue;
+    const sobra = path.join(pasta, nome);
+    const pode = achado[1] === 'anterior' ? ehInstalacaoDoGravador(sobra) : Date.now() - statSync(sobra).mtimeMs > UMA_HORA;
+    if (!pode) continue;
+    try {
+      apagar(sobra, { recursive: true, force: true });
+    } catch {
+      // sobra presa: fica para a proxima
     }
   }
 }
@@ -90,20 +108,11 @@ export function instalar({ origem, destino, operacoes = {} }) {
   // So substitui o destino se ele estiver vazio (lixo do sistema nao conta) ou for uma instalacao
   // anterior desta extensao.
   const existe = existsSync(alvo) && readdirSync(alvo).some((nome) => !ehLixo(nome));
-  if (existe) {
-    let nome = null;
-    try {
-      nome = JSON.parse(readFileSync(path.join(alvo, 'manifest.json'), 'utf8')).name;
-    } catch {
-      nome = null;
-    }
-    if (nome !== NOME_DA_EXTENSAO) {
-      throw new Error('o destino ja existe e nao e uma instalacao do ' + NOME_DA_EXTENSAO + ': ' + alvo);
-    }
+  if (existe && !ehInstalacaoDoGravador(alvo)) {
+    throw new Error('o destino ja existe e nao e uma instalacao do ' + NOME_DA_EXTENSAO + ': ' + alvo);
   }
 
   mkdirSync(path.dirname(alvo), { recursive: true });
-  limparSobras(alvo, apagar);
   const carimbo = process.pid + '-' + Date.now();
   const temporaria = alvo + '.novo-' + carimbo;
   const anterior = alvo + '.anterior-' + carimbo;
@@ -162,6 +171,7 @@ export function instalar({ origem, destino, operacoes = {} }) {
       aviso = 'a instalacao anterior ficou em ' + anterior + ' (apague depois; a nova ja esta no lugar)';
     }
   }
+  limparSobras(alvo, apagar); // so agora: a troca deu certo
   const noDestino = impressao(alvo);
   const assinatura = createHash('sha256').update(JSON.stringify(noDestino)).digest('hex').slice(0, 12);
   return { destino: alvo, arquivos: noDestino.length, assinatura, aviso };

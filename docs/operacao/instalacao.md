@@ -39,8 +39,12 @@ O instalador:
 - troca por **renomeação**: a anterior vai para o lado (`.anterior-…`), a nova entra no lugar, e só
   então a anterior é apagada. Se a anterior não sai do lugar (arquivo preso por antivírus, indexador
   ou Chrome), nada muda; se a nova não entra, a anterior volta; se a anterior não se deixa apagar, a
-  nova já está no lugar e o instalador avisa onde a anterior ficou. Sobras de execuções interrompidas
-  (`.novo-…`, `.anterior-…`) são limpas na próxima;
+  nova já está no lugar e o instalador avisa onde a anterior ficou;
+- sobras de execuções interrompidas são limpas **só depois de uma troca bem-sucedida** (antes dela,
+  uma `.anterior-…` pode ser a única instalação inteira) e só as que têm exatamente o nome que ele
+  gera (`<destino>.novo-<número>-<número>` com mais de 1 hora — a mais nova pode ser de outra execução
+  em andamento — e `<destino>.anterior-<número>-<número>` com o `manifest.json` do Gravador). Pasta
+  com nome parecido (um backup seu, por exemplo) não é tocada;
 - imprime o commit, a quantidade de arquivos e uma assinatura curta da cópia (anotar no registro).
 
 `C:\Extensoes` herda da raiz do disco a permissão de escrita para outras contas do Windows. Decisão

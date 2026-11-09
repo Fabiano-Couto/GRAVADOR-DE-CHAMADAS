@@ -86,7 +86,8 @@ O instalador se recusa a gravar dentro de pasta sincronizada — reconhecida **p
 OneDrive, Dropbox, iCloud Drive; uma pasta sincronizada com outro nome passa, confira você) — ou de um
 repositório git, e a apagar uma pasta que não seja uma instalação anterior do Gravador. Ele copia para
 uma pasta temporária, confere e troca por renomeação: se algo falhar na troca, a instalação anterior
-continua (ou volta) no lugar.
+continua (ou volta) no lugar. Sobras de execuções interrompidas só são apagadas depois de uma troca
+bem-sucedida, e só as que têm exatamente o nome que o instalador gera.
 
 > Em `C:\Extensoes`, outras contas do Windows conseguem alterar os arquivos. Se o computador tem outros
 > usuários, prefira uma pasta só sua, por exemplo

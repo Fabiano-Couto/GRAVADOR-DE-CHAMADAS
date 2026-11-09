@@ -30,8 +30,10 @@ automática quando a chamada começa) só depois da validação desta; ver o pla
    a última fatia entrar no armazém e entrega o arquivo → o offscreen cria um endereço blob → o
    service worker anota "endereço → gravação" (lib/downloads.js, uma chave por download no
    `chrome.storage.session`) e salva com `chrome.downloads.download` (lib/nomes.js: nome e opções).
-   Download concluído → a gravação é apagada do armazém. Download que falha → fica marcada `pendente`
-   e aparece em "Gravações não salvas". O fim do salvamento **sempre** solta a máquina, mesmo com
+   Download concluído → a gravação é apagada do armazém. Download que falha → fica guardada e aparece
+   em "Gravações não salvas": no armazém (marcada `pendente`; se a cópia tinha buraco, os pedaços são
+   trocados pelo arquivo inteiro numa transação só) ou, se o armazém não funciona, **na memória** do
+   offscreen ("só até fechar o Chrome"). O fim do salvamento **sempre** solta a máquina, mesmo com
    falha do armazém.
 
 ### Grafo de áudio (lib/mixer.js)
@@ -93,7 +95,7 @@ fica com `!` enquanto a lista não estiver vazia; a janelinha mostra todos ao ab
 | Código | Quando | Sai quando |
 |---|---|---|
 | `nao-salva` | download falhou; a gravação está no armazém ("Gravações não salvas") | não sobra nada por salvar (o offscreen avisa `limpar-pendente`) |
-| `nao-salva-memoria` | download falhou e a cópia de segurança não funciona: a gravação está **só na memória** do offscreen, na lista até o Chrome fechar | idem |
+| `nao-salva-memoria` | download falhou e a cópia de segurança não funciona: a gravação está **só na memória** do offscreen, na lista até o Chrome fechar | a memória fica vazia (salvou ou descartou) — mesmo com o armazém quebrado, quando não dá para conferir a lista dele |
 | `nao-salva-perdida` | falhou e não havia arquivo nem cópia | a janelinha mostra (informativo) |
 | `gravador-parou` | erro do MediaRecorder no meio | a janelinha mostra (informativo) |
 
@@ -121,7 +123,9 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
   Diz "Salvando..." ao parar e "Gravação salva: nome" só quando o download **termina** (o service
   worker grava `ultimas` nessa hora; a marca de espera é ligada **antes** de pedir, porque arquivo
   pequeno pode terminar antes da resposta). Download **nosso** interrompido (endereço blob da própria
-  extensão) mostra o erro e recarrega a lista. Ao abrir, mostra e limpa o aviso pendente.
+  extensão) mostra o erro e recarrega a lista. Ao abrir, mostra todos os avisos pendentes; os
+  informativos saem do ícone, os de "não salva" ficam até nada faltar salvar. Um alerta da gravação
+  em andamento aparece por cima da mensagem fixa e, quando acaba, ela volta.
 - Página do microfone: se já estiver aberta, é trazida para a frente (`runtime.getContexts`), em vez
   de abrir mais uma aba a cada clique.
 - **Qual microfone é gravado:** a permissão do Chrome vale para a extensão usar qualquer microfone; o
@@ -161,7 +165,7 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | Esquerdo = microfone, direito = aba | separar quem falou o quê; permite transcrição por lado | usuário, 09/11/2026 |
 | Salvar em Downloads > Gravacoes de Chamadas, sem perguntar e sem sobrescrever | automático, nada se perde | usuário, 09/11/2026 |
 | M4A/AAC | abre em qualquer player e no celular; nativo no Chrome | Claude, avisado no chat, 09/11/2026 |
-| Nada sai do computador. **Barreira:** política de segurança do manifest — o Chrome bloqueia, nas páginas da extensão, `fetch`, XHR, WebSocket, EventSource, `sendBeacon` (`connect-src 'none'`), script de fora e `eval` (`script-src 'self'`). **Não governa** WebRTC (`RTCPeerConnection`), `chrome.tabs.create`/navegação com endereço de fora nem `chrome.downloads.download` de endereço remoto: para esses, só o **alarme** de texto (contra descuido; não segura código escrito para escapar dele) e, no download, `arquivoAceito` | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026; barreira pela revisão de segurança; alcance corrigido na 2ª rodada, 09/11/2026 |
+| Nada sai do computador. **Barreira:** política de segurança do manifest — o Chrome bloqueia, nas páginas da extensão, `fetch`, XHR, WebSocket, EventSource, `sendBeacon` (`connect-src 'none'`), script de fora e `eval` (`script-src 'self'`). **Não governa** WebRTC (`RTCPeerConnection`), `chrome.tabs.create`/navegação com endereço de fora nem `chrome.downloads.download` de endereço remoto. O **alarme** de texto pega `RTCPeerConnection` e endereço `http(s)://` **escrito por extenso**; `tabs.create`/`downloads.download` com endereço **montado** não têm regra (o código legítimo usa as duas). No download, a proteção é `arquivoAceito` | voz e dado de cliente (LGPD); extensão de terceiros lendo o WhatsApp era o risco | plano aprovado, 09/11/2026; barreira pela revisão de segurança; alcance corrigido na 2ª rodada, 09/11/2026 |
 | O service worker só baixa blob da própria extensão, para a pasta das gravações, nome simples `.m4a` (`arquivoAceito`, lib/downloads.js) | é a única linha em que valor vindo de mensagem vira arquivo no disco | revisão de segurança, 09/11/2026 |
 | O Chrome carrega a extensão de `C:\Extensoes\Gravador de Chamadas` (fora do Drive), preenchida por [instalar.js](../ferramentas/instalar.js) | código com microfone liberado não pode ser o da pasta sincronizada | usuário, 09/11/2026 (revisão de segurança) |
 | Mantém `C:\Extensoes` mesmo sabendo que outras contas locais do Windows podem escrever lá (alternativa: `%LOCALAPPDATA%`) | o computador é de uso dele | usuário, 09/11/2026 ("Manter C:\Extensoes") |

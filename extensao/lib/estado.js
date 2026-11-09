@@ -56,6 +56,14 @@ export function decidirAlternar(estado, tabIdGravando, tabIdPedido) {
 // (achado da revisao de 09/11/2026: a que estava sendo salva voltava na lista com botoes ativos).
 // Situacao 'salva' = o download terminou mas apagar a copia falhou: nao e "nao salva" (revisao de
 // 09/11/2026: aparecia na lista e "Salvar" gerava arquivo duplicado).
+// Junta as nao salvas do armazem com as que estao so na memoria do offscreen. A mesma gravacao nos
+// dois lugares (copia furada no armazem, arquivo inteiro na memoria) aparece uma vez so: a da
+// memoria, que e a inteira (3a rodada de revisao, 09/11/2026).
+export function juntarNaoSalvas(doArmazem, daMemoria) {
+  const naMemoria = new Set(daMemoria.map((g) => g.id));
+  return [...doArmazem.filter((g) => !naMemoria.has(g.id)), ...daMemoria];
+}
+
 export function gravacoesParaRecuperar(lista, idsOcupados) {
   return lista.filter((g) => !idsOcupados.includes(g.id) && g.situacao !== 'salva').sort((a, b) => b.inicio - a.inicio);
 }

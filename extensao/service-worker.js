@@ -2,7 +2,7 @@
 // NAO guarda a situacao da gravacao: o service worker dorme depois de 30 s parado. Quem sabe se
 // esta gravando e o documento offscreen (offscreen.js). Mapa completo: docs/gravacao.md.
 import { origemDaUrl, nomeArquivo, opcoesDownload } from './lib/nomes.js';
-import { decidirAlternar, gravacoesParaRecuperar } from './lib/estado.js';
+import { decidirAlternar, gravacoesParaRecuperar, juntarNaoSalvas } from './lib/estado.js';
 import { abrirArmazem } from './lib/armazem.js';
 import { textoDoMotivo } from './lib/mensagens.js';
 import { anotarSalvamento, retirarSalvamento, arquivoAceito } from './lib/downloads.js';
@@ -132,7 +132,7 @@ async function recuperaveis() {
     const todas = await banco.listarGravacoes();
     // 'salva' = download concluido, so a copia nao tinha sido apagada: tenta apagar de novo agora.
     for (const g of todas.filter((g) => g.situacao === 'salva')) await banco.apagarGravacao(g.id).catch(() => {});
-    const lista = gravacoesParaRecuperar([...todas, ...naMemoria], ocupadas);
+    const lista = gravacoesParaRecuperar(juntarNaoSalvas(todas, naMemoria), ocupadas);
     return { ok: true, lista: lista.map(({ id, nome, origem, inicio, situacao }) => ({ id, nome, origem, inicio, situacao })) };
   } finally {
     banco.fechar();
@@ -219,10 +219,18 @@ async function atualizarIcone(r) {
 }
 
 // Avisos que aconteceram sem ninguem olhando (regras em lib/pendentes.js) e o icone em seguida.
-async function mudarPendentes(mudanca) {
-  const { pendentes = [] } = await chrome.storage.session.get('pendentes');
-  await chrome.storage.session.set({ pendentes: mudanca(pendentes) });
-  await atualizarIcone(await estadoAtual().catch(() => ({ estado: 'parado' })));
+// Em fila: duas mudancas proximas (dois avisos, aviso + limpar) nao se atropelam entre o ler e o
+// gravar (3a rodada de revisao, 09/11/2026).
+let filaPendentes = Promise.resolve();
+function mudarPendentes(mudanca) {
+  filaPendentes = filaPendentes
+    .then(async () => {
+      const { pendentes = [] } = await chrome.storage.session.get('pendentes');
+      await chrome.storage.session.set({ pendentes: mudanca(pendentes) });
+      await atualizarIcone(await estadoAtual().catch(() => ({ estado: 'parado' })));
+    })
+    .catch((e) => console.error('Gravador: falha ao mudar avisos pendentes', e));
+  return filaPendentes;
 }
 
 // Erro no atalho de teclado (sem janelinha aberta): marca o icone por 5 s e poe o motivo na dica.

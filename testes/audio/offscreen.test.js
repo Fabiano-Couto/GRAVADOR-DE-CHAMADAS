@@ -239,6 +239,35 @@ test('offscreen: o aviso de nao salva so e limpo quando nao sobra nada por salva
   assert.deepEqual(c.limparAvisoSoNoFim, { limpouNoPrimeiro: false, limpouNoSegundo: true });
 });
 
+// ---- 3a rodada de revisao (09/11/2026) ----
+
+test('offscreen: armazem quebrado do inicio ao fim: salvar da memoria limpa o aviso "so na memoria"', opcoes, () => {
+  const a = c.armazemQuebradoDoInicioAoFim;
+  assert.equal(a.naMemoria1, 1);
+  assert.equal(a.recebeu, true);
+  assert.deepEqual(a.limpouAoSalvar, [['nao-salva-memoria']]);
+});
+
+test('offscreen: descartar da memoria funciona com o armazem quebrado e limpa o aviso', opcoes, () => {
+  const a = c.armazemQuebradoDoInicioAoFim;
+  assert.equal(a.naMemoria2, 1);
+  assert.deepEqual(a.descartar, { ok: true });
+  assert.equal(a.naMemoriaFim, 0);
+  assert.deepEqual(a.limpouAoDescartar, [['nao-salva-memoria']]);
+});
+
+test('offscreen: copia com buraco e download falhando: fica guardado o arquivo inteiro', opcoes, () => {
+  const b = c.copiaComBuraco;
+  assert.equal(b.furou, true, 'a fatia falsa nao chegou a falhar: o cenario nao testou nada');
+  assert.equal(b.guardadas, 1);
+  assert.ok(b.bytesOriginais > 1000, 'original vazio: ' + b.bytesOriginais);
+  assert.equal(b.bytesRecuperados, b.bytesOriginais);
+});
+
+test('offscreen: registro sem audio e apagado; a gravacao fica so na memoria, uma vez', opcoes, () => {
+  assert.deepEqual(c.registroSemAudio, { naMemoria: 1, noArmazem: [] });
+});
+
 test('offscreen: Parar duplo ao mesmo tempo salva uma vez e manda o outro aguardar', opcoes, () => {
   const p = c.pararDuplo;
   assert.deepEqual(p.respostas.map((r) => (r.ok ? 'ok' : r.motivo)).sort(), ['aguardar', 'ok']);

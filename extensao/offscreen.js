@@ -11,7 +11,7 @@ import { criarDetectorSilencio } from './lib/silencio.js';
 import { nomeParaRecuperar } from './lib/nomes.js';
 
 // Tempos da vigia. Exportados para o teste encurtar (o valor de producao e este).
-export const AJUSTES = { silencioVoceMs: 10000, silencioClienteMs: 30000, vigiaMs: 500 };
+export const AJUSTES = { silencioVoceMs: 10000, silencioClienteMs: 30000, vigiaMs: 500, fatiaMs: 5000 };
 
 const maquina = criarMaquina();
 let sessao = null; // { id, meta, ctx, fluxos, mixer, gravador, detectores, alertas, semCopia, relogio }
@@ -165,6 +165,7 @@ async function iniciar({ streamId, tabId, origem, nome }) {
       stream: mixer.stream,
       armazem: copia,
       idGravacao: id,
+      fatiaMs: AJUSTES.fatiaMs,
       aoFalhar: (erro) => gravadorFalhou(id, erro),
     });
     if (abaEncerrada) throw new ErroGravador('captura-aba', 'a aba foi fechada antes de a gravacao comecar');
@@ -259,14 +260,16 @@ async function pararESalvar() {
   } catch {
     // marcar e so informativo (recuperacao usa a marca para o nome); o arquivo ja esta na memoria
   }
-  return entregar(s.id, { nome: s.meta.nome, origem: s.meta.origem, inicio: s.meta.inicio }, arquivo);
+  // copiaIncompleta: alguma fatia nao entrou no armazem (buraco na copia de seguranca).
+  const copiaIncompleta = Boolean(s.gravador.erroArmazem);
+  return entregar(s.id, { nome: s.meta.nome, origem: s.meta.origem, inicio: s.meta.inicio, copiaIncompleta }, arquivo);
 }
 
 // Entrega o arquivo ao service worker, que salva em Downloads e depois avisa 'salvo' ou 'falhou-salvar'.
 // O arquivo fica guardado em 'entregas' ate o fim: se o salvamento falhar, ainda da para guarda-lo.
 async function entregar(idGravacao, meta, arquivo) {
   const url = URL.createObjectURL(arquivo);
-  entregas.set(idGravacao, { url, arquivo, nome: meta.nome, origem: meta.origem, inicio: meta.inicio });
+  entregas.set(idGravacao, { url, arquivo, nome: meta.nome, origem: meta.origem, inicio: meta.inicio, copiaIncompleta: Boolean(meta.copiaIncompleta) });
   let r;
   try {
     r = await avisarSw('arquivo-pronto', { idGravacao, url, nome: meta.nome });
@@ -281,28 +284,45 @@ async function entregar(idGravacao, meta, arquivo) {
 }
 
 // Onde fica uma gravacao que NAO foi salva. Devolve 'armazem', 'memoria' ou 'nenhuma'.
-// - ja estava no armazem: fica la (mantem "gravando" quando ja era, para o _recuperada do nome);
+// - ja estava no armazem: fica la (mantem "gravando" quando ja era, para o _recuperada do nome); se
+//   a copia tem buraco (copiaIncompleta) e o arquivo inteiro esta na mao, troca os pedacos por ele
+//   (3a rodada de revisao, 09/11/2026: antes, ficava a copia furada e o arquivo inteiro era jogado
+//   fora); se a troca falhar, a copia antiga fica e o arquivo inteiro vai para a memoria;
 // - nunca foi registrada (gravou sem copia de seguranca): tenta guardar no armazem AGORA (ele pode
 //   ter voltado); se nao der, fica na memoria.
 async function guardarNaoSalva(id, entrega) {
+  const paraMemoria = () => {
+    naMemoria.set(id, { arquivo: entrega.arquivo, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio });
+    return 'memoria';
+  };
   let banco = null;
+  let registrou = false;
   try {
     banco = await armazem();
     const g = await banco.lerGravacao(id);
     if (g) {
+      if (entrega && entrega.copiaIncompleta) {
+        try {
+          await banco.substituirPedacos(id, entrega.arquivo);
+        } catch (e) {
+          console.error('Gravador: copia furada nao pode ser trocada; o arquivo inteiro fica na memoria', e);
+          return paraMemoria();
+        }
+      }
       if (g.situacao !== 'gravando') await banco.marcar(id, 'pendente');
       return 'armazem';
     }
     if (!entrega) return 'nenhuma';
     await banco.criarGravacao({ id, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio, situacao: 'pendente' });
+    registrou = true;
     await banco.guardarPedaco(id, 0, entrega.arquivo);
     return 'armazem';
   } catch (e) {
     console.error('Gravador: nao coube no armazem, fica na memoria', e);
-    if (banco) banco.apagarGravacao(id).catch(() => {}); // nao deixa registro sem audio
+    // Nao deixa registro sem audio (senao a mesma gravacao apareceria duas vezes na lista).
+    if (registrou) await banco.apagarGravacao(id).catch(() => {});
     if (!entrega) return 'nenhuma';
-    naMemoria.set(id, { arquivo: entrega.arquivo, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio });
-    return 'memoria';
+    return paraMemoria();
   }
 }
 
@@ -315,7 +335,6 @@ async function concluir(idGravacao, sucesso) {
   let guardada = null;
   try {
     if (sucesso) {
-      naMemoria.delete(idGravacao);
       const banco = await armazem();
       try {
         await banco.apagarGravacao(idGravacao);
@@ -350,16 +369,20 @@ async function concluir(idGravacao, sucesso) {
 
 // O aviso "nao salva" do icone so sai quando nao sobra nenhuma gravacao por salvar (2a rodada de
 // revisao, 09/11/2026: antes, nunca saia, e o "!" ficava mentindo depois do Salvar).
+// Com o armazem quebrado nao da para conferir a lista dele: o aviso "so na memoria" sai mesmo assim
+// (a memoria esta vazia, entao o que estava nela foi resolvido) e o "nao salva" fica (3a rodada de
+// revisao, 09/11/2026: antes, o "!" ficava mentindo ate fechar o Chrome).
 async function verificarSeTudoSalvo() {
   if (naMemoria.size) return;
+  let codigos = ['nao-salva', 'nao-salva-memoria'];
   try {
     const banco = await armazem();
     const ocupadas = [...entregas.keys(), ...(sessao ? [sessao.id] : [])];
-    if (gravacoesParaRecuperar(await banco.listarGravacoes(), ocupadas).length) return;
+    if (gravacoesParaRecuperar(await banco.listarGravacoes(), ocupadas).length) codigos = ['nao-salva-memoria'];
   } catch {
-    return; // sem como conferir: deixa o aviso
+    codigos = ['nao-salva-memoria'];
   }
-  avisarSw('limpar-pendente', { codigos: ['nao-salva', 'nao-salva-memoria'] }).catch(() => {});
+  avisarSw('limpar-pendente', { codigos }).catch(() => {});
 }
 
 async function recuperar(idGravacao) {
@@ -380,10 +403,16 @@ async function recuperar(idGravacao) {
   return entregar(idGravacao, { nome: nomeParaRecuperar(gravacao), origem: gravacao.origem, inicio: gravacao.inicio }, arquivo);
 }
 
+// Descartar da memoria nao depende do armazem (3a rodada de revisao, 09/11/2026: com o armazem
+// quebrado, o item sumia e a janelinha dizia "Algo deu errado").
 async function descartar(idGravacao) {
   if ((sessao && sessao.id === idGravacao) || entregas.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
-  naMemoria.delete(idGravacao);
-  await (await armazem()).apagarGravacao(idGravacao);
+  const estavaNaMemoria = naMemoria.delete(idGravacao);
+  try {
+    await (await armazem()).apagarGravacao(idGravacao);
+  } catch (e) {
+    if (!estavaNaMemoria) throw e; // so estava no armazem e ele falhou: e erro de verdade
+  }
   await verificarSeTudoSalvo();
   return { ok: true };
 }

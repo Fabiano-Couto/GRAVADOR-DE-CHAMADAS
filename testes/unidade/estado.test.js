@@ -4,7 +4,22 @@
 // errado; gravacao em andamento aparecendo como "interrompida" para recuperar.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { criarMaquina, decidirAlternar, gravacoesParaRecuperar } from '../../extensao/lib/estado.js';
+import { criarMaquina, decidirAlternar, gravacoesParaRecuperar, juntarNaoSalvas } from '../../extensao/lib/estado.js';
+
+// 3a rodada de revisao (09/11/2026): a mesma gravacao no armazem (copia furada) e na memoria (arquivo
+// inteiro) aparecia duas vezes na lista.
+test('nao salvas: a mesma gravacao no armazem e na memoria aparece uma vez, a da memoria', () => {
+  const doArmazem = [
+    { id: 'a', situacao: 'pendente' },
+    { id: 'b', situacao: 'salvando' },
+  ];
+  const daMemoria = [{ id: 'b', situacao: 'memoria' }];
+  assert.deepEqual(juntarNaoSalvas(doArmazem, daMemoria), [
+    { id: 'a', situacao: 'pendente' },
+    { id: 'b', situacao: 'memoria' },
+  ]);
+  assert.deepEqual(juntarNaoSalvas([], []), []);
+});
 
 test('maquina: comeca parada e sem aba', () => {
   const m = criarMaquina();

@@ -97,10 +97,20 @@ const trilhas = () => ({
 navigator.permissions.query = async () => ({ state: 'granted' });
 
 // ---------- falhas do IndexedDB sob encomenda ----------
-const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false };
+const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false, tudo: false, pedacoUmaVez: false };
+// Armazem quebrado de verdade: toda transacao falha (3a rodada de revisao, 09/11/2026).
+const transacaoOriginal = IDBDatabase.prototype.transaction;
+IDBDatabase.prototype.transaction = function (...args) {
+  if (falhasIdb.tudo) throw new DOMException('armazem quebrado (falso)', 'UnknownError');
+  return transacaoOriginal.apply(this, args);
+};
 const putOriginal = IDBObjectStore.prototype.put;
 IDBObjectStore.prototype.put = function (...args) {
   if (falhasIdb.putGravacoes && this.name === 'gravacoes') throw new DOMException('falha falsa', 'UnknownError');
+  if (falhasIdb.pedacoUmaVez && this.name === 'pedacos') {
+    falhasIdb.pedacoUmaVez = false; // uma fatia nao entra na copia (disco cheio por um instante)
+    throw new DOMException('cota estourada (falso)', 'QuotaExceededError');
+  }
   if (falhasIdb.fecharAbaAoRegistrar && this.name === 'gravacoes') {
     falhasIdb.fecharAbaAoRegistrar = false;
     fecharAba(); // a aba fecha exatamente enquanto a gravacao e registrada
@@ -452,11 +462,105 @@ async function limparAvisoSoNoFim() {
     await enviar({ tipo: 'recuperar', idGravacao: id });
     await esperarArquivo();
     await enviar({ tipo: 'salvo', idGravacao: id });
-    return paraSw.some((m) => m.tipo === 'limpar-pendente');
+    // "nao-salva" so pode ser limpo quando nada mais falta salvar
+    return paraSw.some((m) => m.tipo === 'limpar-pendente' && m.codigos.includes('nao-salva'));
   };
   const limpouNoPrimeiro = await salvar('p1');
   const limpouNoSegundo = await salvar('p2');
   return { limpouNoPrimeiro, limpouNoSegundo };
+}
+
+// ---- 3a rodada de revisao (09/11/2026) ----
+// Armazem quebrado do INICIO AO FIM (o caso real; o cenario anterior religava o armazem antes do
+// Salvar): salvar a gravacao da memoria limpa o aviso "so na memoria"; Descartar da memoria
+// funciona mesmo sem armazem e tambem limpa.
+async function armazemQuebradoDoInicioAoFim() {
+  const recusar = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+  const limpezas = () => paraSw.filter((m) => m.tipo === 'limpar-pendente').map((m) => [...m.codigos].sort());
+  falhasIdb.tudo = true;
+  try {
+    // 1) grava, o download falha: vai para a memoria; Salvar da memoria com o armazem ainda quebrado
+    respostaSw = recusar;
+    paraSw = [];
+    await enviar(PEDIDO);
+    await espera(1500);
+    await enviar({ tipo: 'parar' });
+    const naMemoria1 = (await enviar({ tipo: 'estado' })).naMemoria || [];
+    swQueSalva();
+    arquivoRecebido = null;
+    paraSw = [];
+    await enviar({ tipo: 'recuperar', idGravacao: naMemoria1[0] && naMemoria1[0].id });
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    const limpouAoSalvar = limpezas();
+
+    // 2) grava de novo, vai para a memoria; Descartar com o armazem quebrado
+    respostaSw = recusar;
+    await enviar(PEDIDO);
+    await espera(1500);
+    await enviar({ tipo: 'parar' });
+    const naMemoria2 = (await enviar({ tipo: 'estado' })).naMemoria || [];
+    paraSw = [];
+    const descartar = await enviar({ tipo: 'descartar', idGravacao: naMemoria2[0] && naMemoria2[0].id });
+    const naMemoriaFim = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+    return { naMemoria1: naMemoria1.length, recebeu: Boolean(recebido), limpouAoSalvar, naMemoria2: naMemoria2.length, descartar, naMemoriaFim, limpouAoDescartar: limpezas() };
+  } finally {
+    falhasIdb.tudo = false;
+  }
+}
+
+// Uma fatia nao entrou na copia (buraco) e o download falhou: o que fica guardado e o arquivo
+// INTEIRO que estava na memoria, nao a copia furada.
+async function copiaComBuraco() {
+  Object.assign(offscreen.AJUSTES, { fatiaMs: 1000 });
+  let bytesOriginais = 0;
+  try {
+    respostaSw = async (msg) => {
+      if (msg.tipo === 'arquivo-pronto') {
+        bytesOriginais = blobs.get(msg.url).size;
+        return { ok: false, motivo: 'salvar' };
+      }
+      return { ok: true };
+    };
+    await enviar(PEDIDO);
+    await espera(1200);
+    falhasIdb.pedacoUmaVez = true;
+    await espera(3000);
+    await enviar({ tipo: 'parar' });
+    const guardadas = await gravacoesNoArmazem();
+    swQueSalva();
+    arquivoRecebido = null;
+    await enviar({ tipo: 'recuperar', idGravacao: guardadas[0] && guardadas[0].id });
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    return { furou: !falhasIdb.pedacoUmaVez, guardadas: guardadas.length, bytesOriginais, bytesRecuperados: recebido ? recebido.blob.size : 0 };
+  } finally {
+    falhasIdb.pedacoUmaVez = false;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
+}
+
+// Sem copia no inicio; na falha do download o registro entra no armazem mas o AUDIO nao (cota): o
+// registro sem audio e apagado e a gravacao fica so na memoria — uma vez so na lista.
+async function registroSemAudio() {
+  respostaSw = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+  falhasIdb.putGravacoes = true;
+  await enviar(PEDIDO);
+  falhasIdb.putGravacoes = false;
+  await espera(1500);
+  falhasIdb.pedacoUmaVez = true; // o pedaco inteiro nao cabe na hora de guardar a nao salva
+  await enviar({ tipo: 'parar' });
+  falhasIdb.pedacoUmaVez = false;
+  await espera(300);
+  const naMemoria = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+  const noArmazem = await gravacoesNoArmazem();
+  const id = ((await enviar({ tipo: 'estado' })).naMemoria || [])[0];
+  swQueSalva();
+  arquivoRecebido = null;
+  if (id) await enviar({ tipo: 'recuperar', idGravacao: id.id });
+  const recebido = await esperarArquivo();
+  if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+  return { naMemoria, noArmazem };
 }
 
 // Parar pedido duas vezes ao mesmo tempo (atalho + clique): um salva, o outro manda aguardar.
@@ -520,6 +624,9 @@ window.rodarCenarios = async () => ({
   semCopiaEDownloadFalha: await semCopiaEDownloadFalha(),
   semCopiaArmazemVolta: await semCopiaArmazemVolta(),
   limparAvisoSoNoFim: await limparAvisoSoNoFim(),
+  armazemQuebradoDoInicioAoFim: await armazemQuebradoDoInicioAoFim(),
+  copiaComBuraco: await copiaComBuraco(),
+  registroSemAudio: await registroSemAudio(),
 });
 
 window.paginaPronta = true;

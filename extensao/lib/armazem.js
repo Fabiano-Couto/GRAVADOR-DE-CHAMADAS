@@ -76,6 +76,17 @@ export async function abrirArmazem(nomeBanco = NOME_BANCO) {
       return pedido(tx.objectStore('gravacoes').getAll());
     },
 
+    // Troca todos os pedacos de uma gravacao por um arquivo inteiro, numa transacao so: ou a troca
+    // acontece inteira, ou nada muda (a copia antiga fica). Usado quando a copia tem buraco (uma
+    // fatia nao entrou) e o arquivo inteiro esta na memoria (3a rodada de revisao, 09/11/2026).
+    async substituirPedacos(id, blob) {
+      const tx = db.transaction('pedacos', 'readwrite');
+      const loja = tx.objectStore('pedacos');
+      loja.delete(IDBKeyRange.bound([id, 0], [id, Infinity]));
+      loja.put({ id, seq: 0, blob });
+      await concluida(tx);
+    },
+
     async apagarGravacao(id) {
       const tx = db.transaction(['gravacoes', 'pedacos'], 'readwrite');
       tx.objectStore('gravacoes').delete(id);

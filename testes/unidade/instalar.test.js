@@ -5,7 +5,7 @@
 // Usa so pastas temporarias.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { instalar, impressao } from '../../ferramentas/instalar.js';
@@ -49,9 +49,34 @@ test('instalar: recusa apagar uma pasta que nao e uma instalacao do Gravador, e 
   assert.equal(readFileSync(path.join(destino, 'importante.txt'), 'utf8'), 'nao apagar');
 });
 
-test('instalar: recusa destino dentro do Google Drive', () => {
-  assert.throws(() => instalar({ origem, destino: path.join(base, 'Meu Drive', 'Gravador') }), /dentro do Google Drive/);
-  assert.throws(() => instalar({ origem, destino: path.join(base, 'My Drive', 'Gravador') }), /dentro do Google Drive/);
+// 2a rodada de revisao (09/11/2026): drives compartilhados, OneDrive, Dropbox e iCloud passavam.
+test('instalar: recusa destino dentro de qualquer pasta sincronizada com a nuvem', () => {
+  for (const pasta of ['Meu Drive', 'My Drive', 'Drives compartilhados', 'Shared drives', 'OneDrive', 'OneDrive - Empresa X', 'Dropbox', 'iCloudDrive', 'iCloud Drive']) {
+    assert.throws(() => instalar({ origem, destino: path.join(base, pasta, 'Gravador') }), /pasta sincronizada/, pasta);
+  }
+});
+
+// 2a rodada: um outro checkout do projeto passado como destino seria apagado com trabalho nao salvo.
+test('instalar: recusa destino dentro de um repositorio git e nao toca nele', () => {
+  const repo = path.join(base, 'outro-checkout');
+  mkdirSync(path.join(repo, '.git'), { recursive: true });
+  mkdirSync(path.join(repo, 'extensao'), { recursive: true });
+  writeFileSync(path.join(repo, 'extensao', 'manifest.json'), JSON.stringify({ name: 'Gravador de Chamadas' }));
+  writeFileSync(path.join(repo, 'extensao', 'trabalho.js'), '// nao commitado\n');
+  assert.throws(() => instalar({ origem, destino: path.join(repo, 'extensao') }), /repositorio git/);
+  assert.equal(readFileSync(path.join(repo, 'extensao', 'trabalho.js'), 'utf8'), '// nao commitado\n');
+});
+
+test('instalar: pasta que so tem desktop.ini conta como vazia', () => {
+  mkdirSync(destino, { recursive: true });
+  writeFileSync(path.join(destino, 'desktop.ini'), '[.ShellClassInfo]\n');
+  assert.equal(instalar({ origem, destino }).arquivos, 2);
+});
+
+test('instalar: nao deixa pasta temporaria para tras', () => {
+  instalar({ origem, destino });
+  instalar({ origem, destino });
+  assert.deepEqual(readdirSync(path.dirname(destino)), ['Gravador de Chamadas']);
 });
 
 // Defeito de 09/11/2026 (primeira instalacao real, do Drive para o C:): a conferencia comparava na

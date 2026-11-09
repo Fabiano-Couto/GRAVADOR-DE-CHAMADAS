@@ -8,7 +8,7 @@
 //   recusa se extensao/ tem mudanca nao commitada (--forcar ignora, para teste local)
 // Depois: chrome://extensions -> Gravador de Chamadas -> recarregar.
 // Testes: testes/unidade/instalar.test.js.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -42,37 +42,62 @@ export function impressao(pasta) {
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-function dentroDoGoogleDrive(caminho) {
-  return /[\\/](meu drive|my drive)([\\/]|$)/i.test(caminho);
+// Pasta sincronizada com a nuvem (2a rodada de revisao, 09/11/2026: antes so "Meu Drive"/"My Drive";
+// drives compartilhados, OneDrive, Dropbox e iCloud passavam).
+const SINCRONIZADA = /[\\/](meu drive|my drive|drives compartilhados|shared drives|onedrive[^\\/]*|dropbox|icloud ?drive)([\\/]|$)/i;
+
+function dentroDePastaSincronizada(caminho) {
+  return SINCRONIZADA.test(caminho);
+}
+
+// Destino dentro de um repositorio git (ex.: outro checkout do projeto): apagar perderia trabalho
+// nao commitado (2a rodada de revisao).
+function dentroDeRepositorioGit(caminho) {
+  for (let pasta = caminho; ; pasta = path.dirname(pasta)) {
+    if (existsSync(path.join(pasta, '.git'))) return true;
+    if (path.dirname(pasta) === pasta) return false;
+  }
 }
 
 export function instalar({ origem, destino }) {
   const alvo = path.resolve(destino);
-  if (dentroDoGoogleDrive(alvo)) throw new Error('o destino fica dentro do Google Drive: ' + alvo);
+  if (dentroDePastaSincronizada(alvo)) {
+    throw new Error('o destino fica dentro de uma pasta sincronizada (Google Drive, OneDrive, Dropbox, iCloud): ' + alvo);
+  }
   if (alvo.startsWith(path.resolve(origem) + path.sep) || alvo === path.resolve(origem)) {
     throw new Error('o destino fica dentro da propria pasta da extensao: ' + alvo);
   }
-  // So apaga o destino se ele estiver vazio ou for uma instalacao anterior desta extensao.
-  if (existsSync(alvo) && readdirSync(alvo).length > 0) {
-    const manifesto = path.join(alvo, 'manifest.json');
+  if (dentroDeRepositorioGit(alvo)) throw new Error('o destino fica dentro de um repositorio git: ' + alvo);
+  // So substitui o destino se ele estiver vazio (lixo do sistema nao conta) ou for uma instalacao
+  // anterior desta extensao.
+  const existe = existsSync(alvo) && readdirSync(alvo).some((nome) => !ehLixo(nome));
+  if (existe) {
     let nome = null;
     try {
-      nome = JSON.parse(readFileSync(manifesto, 'utf8')).name;
+      nome = JSON.parse(readFileSync(path.join(alvo, 'manifest.json'), 'utf8')).name;
     } catch {
       nome = null;
     }
     if (nome !== NOME_DA_EXTENSAO) {
       throw new Error('o destino ja existe e nao e uma instalacao do ' + NOME_DA_EXTENSAO + ': ' + alvo);
     }
-    rmSync(alvo, { recursive: true, force: true });
   }
-  mkdirSync(alvo, { recursive: true });
-  cpSync(origem, alvo, { recursive: true, filter: (fonte) => !ehLixo(fonte) });
 
-  // Conferencia: os mesmos arquivos, com o mesmo conteudo.
-  const deOrigem = impressao(origem);
+  // Copia para uma pasta irma temporaria, confere, e so entao troca (a instalacao anterior nao some
+  // se a copia falhar no meio).
+  const temporaria = alvo + '.novo-' + process.pid + '-' + Date.now();
+  mkdirSync(path.dirname(alvo), { recursive: true });
+  try {
+    cpSync(origem, temporaria, { recursive: true, filter: (fonte) => !ehLixo(fonte) });
+    // Conferencia: os mesmos arquivos, com o mesmo conteudo.
+    if (JSON.stringify(impressao(origem)) !== JSON.stringify(impressao(temporaria))) throw new Error('a copia nao bateu com a origem');
+    rmSync(alvo, { recursive: true, force: true });
+    renameSync(temporaria, alvo);
+  } catch (e) {
+    rmSync(temporaria, { recursive: true, force: true });
+    throw e;
+  }
   const noDestino = impressao(alvo);
-  if (JSON.stringify(deOrigem) !== JSON.stringify(noDestino)) throw new Error('a copia nao bateu com a origem');
   const assinatura = createHash('sha256').update(JSON.stringify(noDestino)).digest('hex').slice(0, 12);
   return { destino: alvo, arquivos: noDestino.length, assinatura };
 }

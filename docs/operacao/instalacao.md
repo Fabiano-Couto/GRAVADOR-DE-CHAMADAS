@@ -24,11 +24,20 @@ Dentro de `codigo\`: `node ferramentas/instalar.js`
 
 O instalador:
 
-- recusa destino dentro do Google Drive ou dentro da própria pasta da extensão;
-- só apaga o destino se ele estiver vazio ou for uma instalação anterior do Gravador (confere o
-  `manifest.json`); qualquer outra coisa lá dentro faz ele parar sem tocar em nada;
-- copia `extensao/` (sem `desktop.ini` e lixo do sistema) e confere arquivo por arquivo pelo hash;
+- recusa destino dentro de pasta sincronizada (Google Drive — inclusive drives compartilhados —,
+  OneDrive, Dropbox, iCloud), dentro de um repositório git (pode ser outro checkout com trabalho não
+  salvo) ou dentro da própria pasta da extensão;
+- só substitui o destino se ele estiver vazio (lixo do sistema como `desktop.ini` não conta) ou for
+  uma instalação anterior do Gravador (confere o `manifest.json`); qualquer outra coisa lá dentro faz
+  ele parar sem tocar em nada;
+- copia `extensao/` (sem `desktop.ini` e lixo do sistema) para uma **pasta irmã temporária**, confere
+  arquivo por arquivo pelo hash (lista ordenada pelo caminho) e só então troca a instalação anterior —
+  se a cópia falhar no meio, a anterior continua lá;
 - imprime o commit, a quantidade de arquivos e uma assinatura curta da cópia (anotar no registro).
+
+`C:\Extensoes` herda da raiz do disco a permissão de escrita para outras contas do Windows. Decisão
+do usuário (09/11/2026): manter, porque o computador é de uso dele. Com outros usuários na máquina,
+usar uma pasta só da conta: `node ferramentas/instalar.js "%LOCALAPPDATA%\Extensoes\Gravador de Chamadas"`.
 
 **Socorro:** reinstalar o commit anterior (`git checkout <commit> -- extensao`, rodar o instalador
 com `--forcar`, recarregar) e depois voltar o arquivo (`git checkout HEAD -- extensao`).
@@ -47,6 +56,17 @@ do microfone e as gravações não salvas sobrevivem às atualizações.
 **O que pode dar errado:** o Chrome recusa a pasta (mensagem em vermelho) — normalmente arquivo com
 `_` no começo do nome ou manifest inválido; o smoke pega os dois. **Socorro:** remover a extensão
 (nada fica para trás além das gravações já salvas em Downloads).
+
+## Mudar de pasta (ex.: quem carregou pela pasta do Drive)
+
+O identificador da extensão no Chrome vem do caminho da pasta. Mudar de pasta = **outra extensão**
+para o Chrome: a permissão do microfone e as gravações não salvas **não** vão junto.
+
+1. Na extensão antiga, abrir a janelinha e **salvar** o que estiver em "Gravações não salvas".
+2. `chrome://extensions` → extensão antiga → **Remover** (duas "Gravador de Chamadas" carregadas
+   disputam o atalho e mostram dois ícones).
+3. Instalar na pasta nova e **Carregar sem compactação** de lá.
+4. Autorizar o microfone de novo (a página abre sozinha).
 
 ## Atualizar (depois de mudar o código)
 

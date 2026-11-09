@@ -24,15 +24,23 @@ Dentro de `codigo\`: `node ferramentas/instalar.js`
 
 O instalador:
 
-- recusa destino dentro de pasta sincronizada (Google Drive — inclusive drives compartilhados —,
-  OneDrive, Dropbox, iCloud), dentro de um repositório git (pode ser outro checkout com trabalho não
-  salvo) ou dentro da própria pasta da extensão;
+- recusa destino dentro de pasta sincronizada **pelo nome da pasta** (Meu Drive/My Drive, drives
+  compartilhados, OneDrive, Dropbox, iCloud Drive), dentro de um repositório git (pode ser outro
+  checkout com trabalho não salvo) ou dentro da própria pasta da extensão. **O que o nome não pega:**
+  Drive em modo espelho numa pasta com nome escolhido, atalhos do Drive (`.shortcut-targets-by-id`),
+  bibliotecas do SharePoint/Teams sincronizadas pelo OneDrive (ficam numa pasta com o nome da
+  empresa), Dropbox renomeado — quem escolhe o destino confere;
 - só substitui o destino se ele estiver vazio (lixo do sistema como `desktop.ini` não conta) ou for
   uma instalação anterior do Gravador (confere o `manifest.json`); qualquer outra coisa lá dentro faz
   ele parar sem tocar em nada;
-- copia `extensao/` (sem `desktop.ini` e lixo do sistema) para uma **pasta irmã temporária**, confere
-  arquivo por arquivo pelo hash (lista ordenada pelo caminho) e só então troca a instalação anterior —
-  se a cópia falhar no meio, a anterior continua lá;
+- copia `extensao/` (sem `desktop.ini` e lixo do sistema) para uma **pasta irmã temporária** e confere
+  arquivo por arquivo pelo hash (lista ordenada pelo caminho) — se a cópia falhar, a anterior nem foi
+  tocada;
+- troca por **renomeação**: a anterior vai para o lado (`.anterior-…`), a nova entra no lugar, e só
+  então a anterior é apagada. Se a anterior não sai do lugar (arquivo preso por antivírus, indexador
+  ou Chrome), nada muda; se a nova não entra, a anterior volta; se a anterior não se deixa apagar, a
+  nova já está no lugar e o instalador avisa onde a anterior ficou. Sobras de execuções interrompidas
+  (`.novo-…`, `.anterior-…`) são limpas na próxima;
 - imprime o commit, a quantidade de arquivos e uma assinatura curta da cópia (anotar no registro).
 
 `C:\Extensoes` herda da raiz do disco a permissão de escrita para outras contas do Windows. Decisão

@@ -59,7 +59,26 @@ function dentroDeRepositorioGit(caminho) {
   }
 }
 
-export function instalar({ origem, destino }) {
+// Sobras de execucoes anteriores interrompidas (pastas irmas .novo-* e .anterior-* do proprio alvo).
+function limparSobras(alvo, apagar) {
+  const pasta = path.dirname(alvo);
+  if (!existsSync(pasta)) return;
+  const base = path.basename(alvo);
+  for (const nome of readdirSync(pasta)) {
+    if (nome.startsWith(base + '.novo-') || nome.startsWith(base + '.anterior-')) {
+      try {
+        apagar(path.join(pasta, nome), { recursive: true, force: true });
+      } catch {
+        // sobra presa: fica para a proxima
+      }
+    }
+  }
+}
+
+// operacoes: renomear/apagar trocaveis so para o teste simular arquivo preso (antivirus, indexador).
+export function instalar({ origem, destino, operacoes = {} }) {
+  const renomear = operacoes.renomear || renameSync;
+  const apagar = operacoes.apagar || rmSync;
   const alvo = path.resolve(destino);
   if (dentroDePastaSincronizada(alvo)) {
     throw new Error('o destino fica dentro de uma pasta sincronizada (Google Drive, OneDrive, Dropbox, iCloud): ' + alvo);
@@ -83,23 +102,69 @@ export function instalar({ origem, destino }) {
     }
   }
 
-  // Copia para uma pasta irma temporaria, confere, e so entao troca (a instalacao anterior nao some
-  // se a copia falhar no meio).
-  const temporaria = alvo + '.novo-' + process.pid + '-' + Date.now();
   mkdirSync(path.dirname(alvo), { recursive: true });
+  limparSobras(alvo, apagar);
+  const carimbo = process.pid + '-' + Date.now();
+  const temporaria = alvo + '.novo-' + carimbo;
+  const anterior = alvo + '.anterior-' + carimbo;
+  const tirar = (pasta) => {
+    try {
+      apagar(pasta, { recursive: true, force: true });
+    } catch {
+      // sobra: a proxima execucao limpa
+    }
+  };
+
+  // 1) copia para a pasta irma temporaria e confere: a instalacao anterior nem e tocada.
   try {
     cpSync(origem, temporaria, { recursive: true, filter: (fonte) => !ehLixo(fonte) });
-    // Conferencia: os mesmos arquivos, com o mesmo conteudo.
     if (JSON.stringify(impressao(origem)) !== JSON.stringify(impressao(temporaria))) throw new Error('a copia nao bateu com a origem');
-    rmSync(alvo, { recursive: true, force: true });
-    renameSync(temporaria, alvo);
   } catch (e) {
-    rmSync(temporaria, { recursive: true, force: true });
+    tirar(temporaria);
     throw e;
+  }
+
+  // 2) troca por renomeacao (3a rodada de revisao, 09/11/2026: antes, apagar a anterior podia falhar
+  //    no meio — arquivo preso — e a copia nova, ja conferida, era jogada fora):
+  //    anterior -> de lado; nova -> no lugar; so entao apaga a anterior.
+  const tinhaAnterior = existsSync(alvo);
+  if (tinhaAnterior) {
+    try {
+      renomear(alvo, anterior);
+    } catch (e) {
+      tirar(temporaria);
+      throw new Error('nao consegui tirar a instalacao anterior do lugar (arquivo em uso?); nada foi mudado: ' + e.message);
+    }
+  }
+  try {
+    renomear(temporaria, alvo);
+  } catch (e) {
+    let devolvida = false;
+    if (tinhaAnterior) {
+      try {
+        renomear(anterior, alvo);
+        devolvida = true;
+      } catch {
+        // fica em "anterior"; a mensagem diz onde
+      }
+    }
+    tirar(temporaria);
+    throw new Error(
+      'nao consegui por a instalacao nova no lugar: ' + e.message +
+        (tinhaAnterior ? (devolvida ? '; a anterior foi devolvida' : '; a anterior ficou em ' + anterior) : ''),
+    );
+  }
+  let aviso = null;
+  if (tinhaAnterior) {
+    try {
+      apagar(anterior, { recursive: true, force: true });
+    } catch {
+      aviso = 'a instalacao anterior ficou em ' + anterior + ' (apague depois; a nova ja esta no lugar)';
+    }
   }
   const noDestino = impressao(alvo);
   const assinatura = createHash('sha256').update(JSON.stringify(noDestino)).digest('hex').slice(0, 12);
-  return { destino: alvo, arquivos: noDestino.length, assinatura };
+  return { destino: alvo, arquivos: noDestino.length, assinatura, aviso };
 }
 
 // ---------- linha de comando ----------
@@ -119,6 +184,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const commit = git(['rev-parse', '--short', 'HEAD']).stdout.trim();
     console.log('instalado em ' + r.destino);
     console.log('commit ' + commit + (pendente ? ' (+ mudancas nao commitadas, --forcar)' : '') + '; ' + r.arquivos + ' arquivos; assinatura ' + r.assinatura);
+    if (r.aviso) console.log('ATENCAO: ' + r.aviso);
     console.log('agora: chrome://extensions -> Gravador de Chamadas -> recarregar');
   } catch (e) {
     console.error('NAO instalado: ' + e.message);

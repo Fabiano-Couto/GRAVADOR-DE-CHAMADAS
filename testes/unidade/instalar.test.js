@@ -5,7 +5,7 @@
 // Usa so pastas temporarias.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { instalar, impressao } from '../../ferramentas/instalar.js';
@@ -71,6 +71,58 @@ test('instalar: pasta que so tem desktop.ini conta como vazia', () => {
   mkdirSync(destino, { recursive: true });
   writeFileSync(path.join(destino, 'desktop.ini'), '[.ShellClassInfo]\n');
   assert.equal(instalar({ origem, destino }).arquivos, 2);
+});
+
+// 3a rodada de revisao (09/11/2026): apagar a instalacao anterior podia falhar no meio (arquivo preso
+// por antivirus/indexador/Chrome), deixando-a meio apagada, e a copia nova ja conferida era jogada
+// fora. Agora a troca e por renomeacao. As falhas sao simuladas trocando renomear/apagar.
+const conteudo = (rel) => readFileSync(path.join(destino, rel), 'utf8');
+const versaoNova = () => writeFileSync(path.join(origem, 'lib', 'a.js'), 'export const a = 2;\n');
+
+test('instalar: anterior presa (nao sai do lugar): nada muda e nao sobra temporaria', () => {
+  instalar({ origem, destino });
+  versaoNova();
+  const renomear = () => {
+    throw new Error('EPERM falso');
+  };
+  assert.throws(() => instalar({ origem, destino, operacoes: { renomear } }), /nada foi mudado/);
+  assert.equal(conteudo('lib/a.js'), 'export const a = 1;\n');
+  assert.deepEqual(readdirSync(path.dirname(destino)), ['Gravador de Chamadas']);
+});
+
+test('instalar: nova nao entra no lugar: a anterior e devolvida inteira', () => {
+  instalar({ origem, destino });
+  versaoNova();
+  let chamada = 0;
+  const renomear = (de, para) => {
+    chamada++;
+    if (chamada === 2) throw new Error('EBUSY falso'); // 1a: anterior para o lado; 2a: nova no lugar
+    return renameSync(de, para);
+  };
+  assert.throws(() => instalar({ origem, destino, operacoes: { renomear } }), /a anterior foi devolvida/);
+  assert.equal(conteudo('lib/a.js'), 'export const a = 1;\n');
+  assert.equal(conteudo('manifest.json'), JSON.stringify({ name: 'Gravador de Chamadas' }));
+  assert.deepEqual(readdirSync(path.dirname(destino)), ['Gravador de Chamadas']);
+});
+
+test('instalar: anterior nao se deixa apagar: a nova ja esta no lugar e o aviso diz onde a anterior ficou', () => {
+  instalar({ origem, destino });
+  versaoNova();
+  const apagar = (alvo, opcoes) => {
+    if (alvo.includes('.anterior-')) throw new Error('EPERM falso');
+    return rmSync(alvo, opcoes);
+  };
+  const r = instalar({ origem, destino, operacoes: { apagar } });
+  assert.equal(conteudo('lib/a.js'), 'export const a = 2;\n');
+  assert.match(r.aviso, /a instalacao anterior ficou em .*Gravador de Chamadas\.anterior-/);
+});
+
+test('instalar: limpa sobras de execucoes anteriores interrompidas', () => {
+  mkdirSync(path.join(path.dirname(destino), 'Gravador de Chamadas.novo-1-2'), { recursive: true });
+  mkdirSync(path.join(path.dirname(destino), 'Gravador de Chamadas.anterior-3-4'), { recursive: true });
+  mkdirSync(path.join(path.dirname(destino), 'Outra Coisa'), { recursive: true });
+  instalar({ origem, destino });
+  assert.deepEqual(readdirSync(path.dirname(destino)).sort(), ['Gravador de Chamadas', 'Outra Coisa']);
 });
 
 test('instalar: nao deixa pasta temporaria para tras', () => {

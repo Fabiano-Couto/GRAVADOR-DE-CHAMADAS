@@ -256,12 +256,15 @@ test('offscreen: descartar da memoria funciona com o armazem quebrado e limpa o 
   assert.deepEqual(a.limpouAoDescartar, [['nao-salva-memoria']]);
 });
 
-test('offscreen: copia com buraco e download falhando: fica guardado o arquivo inteiro', opcoes, () => {
+test('offscreen: copia com buraco e download falhando: fica guardado o arquivo inteiro, como "pendente" e com o nome original', opcoes, () => {
   const b = c.copiaComBuraco;
   assert.equal(b.furou, true, 'a fatia falsa nao chegou a falhar: o cenario nao testou nada');
   assert.equal(b.guardadas, 1);
   assert.ok(b.bytesOriginais > 1000, 'original vazio: ' + b.bytesOriginais);
   assert.equal(b.bytesRecuperados, b.bytesOriginais);
+  // 6a rodada: depois da troca bem-sucedida a copia esta inteira — nao "interrompida", sem _recuperada
+  assert.equal(b.situacao, 'pendente');
+  assert.equal(b.nome, 'Gravacoes de Chamadas/a.m4a');
 });
 
 test('offscreen: registro sem audio e apagado; a gravacao fica so na memoria, uma vez', opcoes, () => {
@@ -315,6 +318,42 @@ test('offscreen: descartar o que esta so no armazem, com ele quebrado, da erro e
   assert.equal(d.ok, false);
   assert.equal(d.motivo, 'interno');
   assert.deepEqual(d.depois, [{ id: 'so-armazem', situacao: 'pendente' }]);
+});
+
+// ---- 6a rodada de revisao (09/11/2026) ----
+
+test('offscreen: armazem quebrado ja no Parar: Descartar da erro, mantem o arquivo na memoria e depois apaga tudo', opcoes, () => {
+  const a = c.armazemQuebraNoParar;
+  assert.equal(a.naMemoria1, 1);
+  assert.deepEqual(a.descartar, { ok: false, motivo: 'interno' });
+  assert.equal(a.naMemoria2, 1, 'o Descartar que deu erro tirou o arquivo inteiro da memoria');
+  // Salvar de novo (da memoria), falhando com o armazem quebrado: continua sabendo do registro
+  assert.deepEqual(a.descartar2, { ok: false, motivo: 'interno' });
+  assert.equal(a.naMemoria3, 1);
+  assert.equal(a.noArmazem, 1);
+  assert.deepEqual(a.limpo, { ok: true });
+  assert.deepEqual(a.depois, []);
+  assert.equal(a.naMemoriaFim, 0);
+});
+
+test('offscreen: Salvar do armazem, download e armazem falhando juntos: na memoria, e Descartar quebrado da erro', opcoes, () => {
+  const r = c.recuperarDoArmazemQuebraNaFalha;
+  assert.deepEqual(r.naMemoria1, ['so-armazem-2']);
+  assert.deepEqual(r.descartar, { ok: false, motivo: 'interno' });
+  assert.equal(r.noArmazem, 1);
+  assert.deepEqual(r.limpo, { ok: true });
+  assert.deepEqual(r.depois, []);
+  assert.equal(r.naMemoriaFim, 0);
+});
+
+test('offscreen: copia inteira e so o marcar "pendente" falhando: aviso "nao salva", nada na memoria', opcoes, () => {
+  const s = c.somaBateMarcarFalha;
+  assert.deepEqual(s.avisos, ['nao-salva']);
+  assert.equal(s.naMemoria, 0);
+  assert.equal(s.guardadas, 1);
+  assert.equal(s.situacao, 'salvando', 'o cenario nao passou pela marca "salvando"');
+  assert.equal(s.nome, 'Gravacoes de Chamadas/a.m4a');
+  assert.deepEqual(s.depois, []);
 });
 
 test('offscreen: Parar duplo ao mesmo tempo salva uma vez e manda o outro aguardar', opcoes, () => {

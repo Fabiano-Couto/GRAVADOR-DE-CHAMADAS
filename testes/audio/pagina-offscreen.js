@@ -97,7 +97,7 @@ const trilhas = () => ({
 navigator.permissions.query = async () => ({ state: 'granted' });
 
 // ---------- falhas do IndexedDB sob encomenda ----------
-const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false, tudo: false, pedacoUmaVez: false, substituir: 0 };
+const falhasIdb = { putGravacoes: false, deleteTudo: false, fecharAbaAoRegistrar: false, tudo: false, pedacoUmaVez: false, substituir: 0, marcarPendente: false };
 // Falha como a do IndexedDB real: a transacao inteira aborta (nada do que ela fez fica) — 4a rodada
 // de revisao, 09/11/2026: lancar sem abortar deixava passar parte da transacao.
 function falharTransacao(loja, mensagem, nome) {
@@ -117,6 +117,10 @@ IDBDatabase.prototype.transaction = function (...args) {
 const putOriginal = IDBObjectStore.prototype.put;
 IDBObjectStore.prototype.put = function (...args) {
   if (falhasIdb.putGravacoes && this.name === 'gravacoes') throw new DOMException('falha falsa', 'UnknownError');
+  // So a marca "pendente" falha (a "salvando" do Parar passa) — 6a rodada de revisao.
+  if (falhasIdb.marcarPendente && this.name === 'gravacoes' && args[0] && args[0].situacao === 'pendente') {
+    falharTransacao(this, 'falha falsa ao marcar pendente', 'UnknownError');
+  }
   if (falhasIdb.pedacoUmaVez && this.name === 'pedacos') {
     falhasIdb.pedacoUmaVez = false; // uma fatia nao entra na copia (disco cheio por um instante)
     falharTransacao(this, 'cota estourada (falso)', 'QuotaExceededError');
@@ -548,7 +552,14 @@ async function copiaComBuraco() {
     await enviar({ tipo: 'recuperar', idGravacao: guardadas[0] && guardadas[0].id });
     const recebido = await esperarArquivo();
     if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
-    return { furou: !falhasIdb.pedacoUmaVez, guardadas: guardadas.length, bytesOriginais, bytesRecuperados: recebido ? recebido.blob.size : 0 };
+    return {
+      furou: !falhasIdb.pedacoUmaVez,
+      guardadas: guardadas.length,
+      situacao: guardadas[0] && guardadas[0].situacao,
+      nome: recebido && recebido.nome,
+      bytesOriginais,
+      bytesRecuperados: recebido ? recebido.blob.size : 0,
+    };
   } finally {
     falhasIdb.pedacoUmaVez = false;
     Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
@@ -727,6 +738,112 @@ async function descartarSoArmazemQuebrado() {
   return { ok: descartar.ok, motivo: descartar.motivo, depois };
 }
 
+// ---- 6a rodada de revisao (09/11/2026) ----
+// Armazem quebra de vez DEPOIS de a gravacao ter sido registrada (registro + fatias la dentro):
+// a gravacao vai para a memoria sabendo que ha copia no armazem; Descartar com ele quebrado da erro
+// e NAO tira o arquivo da memoria; com o armazem de volta, Descartar apaga tudo.
+async function armazemQuebraNoParar() {
+  respostaSw = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+  try {
+    await enviar(PEDIDO);
+    await espera(1500);
+    falhasIdb.tudo = true;
+    await enviar({ tipo: 'parar' });
+    const naMemoria1 = (await enviar({ tipo: 'estado' })).naMemoria || [];
+    const id = naMemoria1[0] && naMemoria1[0].id;
+    const descartar = await enviar({ tipo: 'descartar', idGravacao: id });
+    const naMemoria2 = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+    // Salvar de novo (da memoria) com o armazem ainda quebrado e o download recusado: volta para a
+    // memoria lembrando que ha registro no armazem — o Descartar seguinte continua dando erro.
+    await enviar({ tipo: 'recuperar', idGravacao: id });
+    const descartar2 = await enviar({ tipo: 'descartar', idGravacao: id });
+    const naMemoria3 = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+    falhasIdb.tudo = false;
+    const noArmazem = (await gravacoesNoArmazem()).filter((g) => g.id === id).length;
+    const limpo = await enviar({ tipo: 'descartar', idGravacao: id });
+    return {
+      naMemoria1: naMemoria1.length,
+      descartar: { ok: descartar.ok, motivo: descartar.motivo },
+      naMemoria2,
+      descartar2: { ok: descartar2.ok, motivo: descartar2.motivo },
+      naMemoria3,
+      noArmazem,
+      limpo,
+      depois: await gravacoesNoArmazem(),
+      naMemoriaFim: ((await enviar({ tipo: 'estado' })).naMemoria || []).length,
+    };
+  } finally {
+    falhasIdb.tudo = false;
+  }
+}
+
+// Salvar uma gravacao que esta SO no armazem; o download falha e o armazem quebra nessa hora: ela vai
+// para a memoria sabendo que o registro continua no armazem (Descartar quebrado = erro).
+async function recuperarDoArmazemQuebraNaFalha() {
+  const banco = await abrirArmazem();
+  await banco.criarGravacao({ id: 'so-armazem-2', nome: 'Gravacoes de Chamadas/q.m4a', origem: 'Meet', inicio: 7, situacao: 'pendente' });
+  await banco.guardarPedaco('so-armazem-2', 0, new Blob(['audio guardado']));
+  banco.fechar();
+  respostaSw = async (msg) => {
+    if (msg.tipo !== 'arquivo-pronto') return { ok: true };
+    falhasIdb.tudo = true; // o armazem quebra exatamente quando o download falha
+    return { ok: false, motivo: 'salvar' };
+  };
+  try {
+    await enviar({ tipo: 'recuperar', idGravacao: 'so-armazem-2' });
+    const naMemoria1 = ((await enviar({ tipo: 'estado' })).naMemoria || []).map((g) => g.id);
+    const descartar = await enviar({ tipo: 'descartar', idGravacao: 'so-armazem-2' });
+    falhasIdb.tudo = false;
+    const noArmazem = (await gravacoesNoArmazem()).filter((g) => g.id === 'so-armazem-2').length;
+    const limpo = await enviar({ tipo: 'descartar', idGravacao: 'so-armazem-2' });
+    return {
+      naMemoria1,
+      descartar: { ok: descartar.ok, motivo: descartar.motivo },
+      noArmazem,
+      limpo,
+      depois: await gravacoesNoArmazem(),
+      naMemoriaFim: ((await enviar({ tipo: 'estado' })).naMemoria || []).length,
+    };
+  } finally {
+    falhasIdb.tudo = false;
+  }
+}
+
+// Copia INTEIRA no armazem (soma bate), download recusado e so o MARCAR "pendente" falha: a copia
+// inteira esta la; aviso "nao salva", nada na memoria (antes ia para a memoria com "so ate fechar o
+// Chrome"). Ela fica "salvando" e aparece na lista com o nome original.
+async function somaBateMarcarFalha() {
+  Object.assign(offscreen.AJUSTES, { fatiaMs: 1000 });
+  try {
+    respostaSw = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+    await enviar(PEDIDO);
+    await espera(2500);
+    paraSw = [];
+    falhasIdb.marcarPendente = true;
+    await enviar({ tipo: 'parar' });
+    falhasIdb.marcarPendente = false;
+    const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
+    const naMemoria = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+    const guardadas = await gravacoesNoArmazem();
+    swQueSalva();
+    arquivoRecebido = null;
+    await enviar({ tipo: 'recuperar', idGravacao: guardadas[0] && guardadas[0].id });
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    return {
+      avisos,
+      naMemoria,
+      guardadas: guardadas.length,
+      situacao: guardadas[0] && guardadas[0].situacao,
+      nome: recebido && recebido.nome,
+      depois: await gravacoesNoArmazem(),
+    };
+  } finally {
+    falhasIdb.marcarPendente = false;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
+}
+
 // Parar pedido duas vezes ao mesmo tempo (atalho + clique): um salva, o outro manda aguardar.
 async function pararDuplo() {
   swQueSalva();
@@ -796,6 +913,9 @@ window.rodarCenarios = async () => ({
   descartarSoArmazemQuebrado: await descartarSoArmazemQuebrado(),
   copiaInteiraTrocaFalharia: await copiaInteiraTrocaFalharia(),
   descartarMemoriaComCopiaQuebrado: await descartarMemoriaComCopiaQuebrado(),
+  armazemQuebraNoParar: await armazemQuebraNoParar(),
+  recuperarDoArmazemQuebraNaFalha: await recuperarDoArmazemQuebraNaFalha(),
+  somaBateMarcarFalha: await somaBateMarcarFalha(),
 });
 
 window.paginaPronta = true;

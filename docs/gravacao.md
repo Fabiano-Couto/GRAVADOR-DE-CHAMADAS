@@ -33,11 +33,16 @@ automática quando a chamada começa) só depois da validação desta; ver o pla
    Download concluído → a gravação é apagada do armazém. Download que falha → fica guardada e aparece
    em "Gravações não salvas":
    - no armazém, marcada `pendente`. Se a soma dos pedaços difere do arquivo que está na mão (cópia
-     com buraco), os pedaços são trocados por ele numa transação só; se a soma bate, nada é trocado;
+     com buraco), os pedaços são trocados por ele numa transação só e a gravação passa a `pendente`
+     (a cópia agora está inteira: nome original, sem `_recuperada`); se a soma bate, nada é trocado.
+     Cópia inteira em que só a marca falha continua no armazém (fica `salvando`, nome original);
    - se o armazém não funciona ou a troca falha, **na memória** do offscreen ("só até fechar o
      Chrome"). Uma cópia com buraco nunca é marcada `salvando`: fica `gravando` desde o Parar, e por
-     isso ganha `_recuperada` se o Chrome fechar antes de salvar. O fim do salvamento **sempre** solta a máquina, mesmo com
-   falha do armazém.
+     isso ganha `_recuperada` se o Chrome fechar antes de salvar (antes da troca). A memória lembra se
+     a gravação também tem registro no armazém (registrado no início, mesmo que o armazém não possa ser
+     lido agora): aí **Descartar** com o armazém quebrado dá erro e o arquivo continua na lista, em
+     vez de dizer "ok" e a gravação voltar depois. O fim do salvamento **sempre** solta a máquina,
+     mesmo com falha do armazém.
 
 ### Grafo de áudio (lib/mixer.js)
 
@@ -235,7 +240,7 @@ aviso pendente `gravador-parou`. Antes, o REC seguia aceso e o arquivo saía tru
 | [mensagens.test.js](../testes/unidade/mensagens.test.js) | textos ao usuário |
 | [downloads.test.js](../testes/unidade/downloads.test.js) | dois salvamentos ao mesmo tempo não se atropelam |
 | [audio.test.js](../testes/audio/audio.test.js) | Chrome real + ffmpeg: AAC estéreo; esquerdo só voz, direito só cliente; alto-falante toca o cliente e nunca a voz; medidores; armazém lento sem órfão; armazém falho não estraga o arquivo; recuperação |
-| [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; microfone e aba fechados depois do Parar; endereço blob liberado; aba fechada no início, no último instante e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida; avisos de microfone e aba mudos; gravação sem cópia de segurança; erro do gravador; recuperação que falha mantém `_recuperada`; Parar duplo |
+| [offscreen.test.js](../testes/audio/offscreen.test.js) | o offscreen.js de verdade com o Chrome falso por fora: fluxo inteiro com os canais certos; microfone e aba fechados depois do Parar; endereço blob liberado; aba fechada no início, no último instante e no meio; microfone negado solta a aba; falha do armazém não prende em "salvando"; download recusado guarda pendente; conclusão de gravação desconhecida; avisos de microfone e aba mudos; gravação sem cópia de segurança; erro do gravador; recuperação que falha mantém `_recuperada`; gravação não salva **na memória** quando o armazém não funciona (e de volta ao armazém quando ele volta); aviso "não salva" só sai quando não sobra nada; registro sem áudio é apagado; marcar falhando não apaga a cópia; cópia inteira: nada é trocado; cópia com buraco trocada pelo arquivo inteiro (fica `pendente`, nome original); cópia inteira com a marca falhando fica no armazém; Descartar com o armazém quebrado: da memória funciona, com registro no armazém dá erro sem perder o arquivo da memória (inclusive depois de Salvar falhar de novo); Parar duplo |
 | [icone.test.js](../testes/unidade/icone.test.js) | selo, cor e dica do ícone; aviso pendente persiste |
 | [popup.test.js](../testes/tela/popup.test.js) | a janelinha de verdade em Chrome real (Chrome da extensão falso injetado antes dos scripts, sob a política do manifest): estilo **calculado** (barras escondidas parado), textos e botões em cada situação, nome do microfone, aviso, recusa como erro, "Gravação salva" mesmo com o download terminando antes da resposta, aviso pendente; confere que o CSS carregou (largura 320 px) para não ficar cego |
 | (sem teste automático) | service-worker.js usa APIs que só existem na extensão carregada (tabCapture, downloads, offscreen, action): a lógica que dá para separar foi para lib/ (estado, nomes, downloads, icone, mensagens) e é testada; o resto é conferido na conferência local guiada |

@@ -281,11 +281,33 @@ test('offscreen: inteiro na memoria + salvar falhando de novo: o inteiro continu
   assert.deepEqual(b.gravacoesDepois, []);
 });
 
-test('offscreen: marcar falhando nao apaga a copia que ja estava no armazem', opcoes, () => {
+test('offscreen: marcar falhando nao apaga a copia que ja estava no armazem e o aviso diz que ela esta la', opcoes, () => {
   const m = c.marcarFalhaMantemCopia;
   assert.equal(m.depois.length, 1);
   assert.equal(m.depois[0].id, 'existente');
   assert.equal(m.pedacos, 1);
+  assert.deepEqual(m.avisos, ['nao-salva'], '5a rodada: antes avisava "perdida" com a copia no armazem');
+});
+
+// ---- 5a rodada de revisao (09/11/2026) ----
+
+test('offscreen: copia inteira no armazem e download falhando: nao troca nada, aviso "nao salva", nada na memoria', opcoes, () => {
+  const s = c.copiaInteiraTrocaFalharia;
+  assert.equal(s.trocaTentada, false, 'trocou pedacos de uma copia que ja estava inteira');
+  assert.deepEqual(s.avisos, ['nao-salva']);
+  assert.equal(s.naMemoria, 0);
+  assert.equal(s.situacao, 'pendente');
+  assert.ok(s.bytesOriginais > 1000, 'original vazio: ' + s.bytesOriginais);
+  assert.equal(s.bytesRecuperados, s.bytesOriginais);
+});
+
+test('offscreen: descartar gravacao na memoria e no armazem, com o armazem quebrado, da erro (a copia ficaria)', opcoes, () => {
+  const d = c.descartarMemoriaComCopiaQuebrado;
+  assert.equal(d.naMemoria, 1);
+  assert.deepEqual(d.descartar, { ok: false, motivo: 'interno' });
+  assert.equal(d.noArmazem, 1);
+  assert.deepEqual(d.limpo, { ok: true });
+  assert.deepEqual(d.depois, []);
 });
 
 test('offscreen: descartar o que esta so no armazem, com ele quebrado, da erro e mantem a gravacao', opcoes, () => {

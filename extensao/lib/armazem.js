@@ -77,8 +77,8 @@ export async function abrirArmazem(nomeBanco = NOME_BANCO) {
     },
 
     // Troca todos os pedacos de uma gravacao por um arquivo inteiro, numa transacao so: ou a troca
-    // acontece inteira, ou nada muda (a copia antiga fica). Usado quando a copia tem buraco (uma
-    // fatia nao entrou) e o arquivo inteiro esta na memoria (3a rodada de revisao, 09/11/2026).
+    // acontece inteira, ou nada muda (a copia antiga fica). O offscreen usa quando a soma dos pedacos
+    // difere do arquivo que esta na mao (copia com buraco) — revisoes de 09/11/2026.
     async substituirPedacos(id, blob) {
       const tx = db.transaction('pedacos', 'readwrite');
       const loja = tx.objectStore('pedacos');

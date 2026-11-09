@@ -639,14 +639,77 @@ async function marcarFalhaMantemCopia() {
   await banco.guardarPedaco('existente', 0, new Blob(['audio existente']));
   banco.fechar();
   falhasIdb.putGravacoes = true; // marcar(id, 'pendente') falha
+  paraSw = [];
   await enviar({ tipo: 'falhou-salvar', idGravacao: 'existente' });
   falhasIdb.putGravacoes = false;
+  const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
   const depois = await gravacoesNoArmazem();
   const limpar = await abrirArmazem();
   const pedacos = (await limpar.lerPedacos('existente')).length;
   await limpar.apagarGravacao('existente');
   limpar.fechar();
-  return { depois, pedacos };
+  return { depois, pedacos, avisos };
+}
+
+// ---- 5a rodada de revisao (09/11/2026) ----
+// Copia INTEIRA no armazem, download recusado, e a troca de pedacos falharia: nao ha o que trocar
+// (a soma bate), o aviso e "nao salva" (esta no armazem) e nada vai para a memoria.
+async function copiaInteiraTrocaFalharia() {
+  Object.assign(offscreen.AJUSTES, { fatiaMs: 1000 });
+  let bytesOriginais = 0;
+  try {
+    respostaSw = async (msg) => {
+      if (msg.tipo === 'arquivo-pronto' && !bytesOriginais) bytesOriginais = blobs.get(msg.url).size;
+      return msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true };
+    };
+    await enviar(PEDIDO);
+    await espera(3200);
+    falhasIdb.substituir = 1; // se alguem tentar trocar, falha
+    paraSw = [];
+    await enviar({ tipo: 'parar' });
+    const avisos = paraSw.filter((m) => m.tipo === 'aviso').map((m) => m.codigo);
+    const naMemoria = ((await enviar({ tipo: 'estado' })).naMemoria || []).length;
+    const guardadas = await gravacoesNoArmazem();
+    const trocaTentada = falhasIdb.substituir === 0;
+    falhasIdb.substituir = 0;
+    swQueSalva();
+    arquivoRecebido = null;
+    await enviar({ tipo: 'recuperar', idGravacao: guardadas[0] && guardadas[0].id });
+    const recebido = await esperarArquivo();
+    if (recebido) await enviar({ tipo: 'salvo', idGravacao: recebido.idGravacao });
+    return { avisos, naMemoria, situacao: guardadas[0] && guardadas[0].situacao, trocaTentada, bytesOriginais, bytesRecuperados: recebido ? recebido.blob.size : 0 };
+  } finally {
+    falhasIdb.substituir = 0;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
+}
+
+// Gravacao na memoria E no armazem (copia furada, troca falhou); Descartar com o armazem quebrado:
+// e erro (a copia do armazem nao foi apagada) — antes dizia ok e a gravacao voltava na lista.
+async function descartarMemoriaComCopiaQuebrado() {
+  Object.assign(offscreen.AJUSTES, { fatiaMs: 1000 });
+  try {
+    respostaSw = async (msg) => (msg.tipo === 'arquivo-pronto' ? { ok: false, motivo: 'salvar' } : { ok: true });
+    await enviar(PEDIDO);
+    await espera(1200);
+    falhasIdb.pedacoUmaVez = true;
+    await espera(2500);
+    falhasIdb.substituir = 1;
+    await enviar({ tipo: 'parar' });
+    const naMemoria = (await enviar({ tipo: 'estado' })).naMemoria || [];
+    const id = naMemoria[0] && naMemoria[0].id;
+    falhasIdb.tudo = true;
+    const descartar = await enviar({ tipo: 'descartar', idGravacao: id });
+    falhasIdb.tudo = false;
+    const noArmazem = (await gravacoesNoArmazem()).filter((g) => g.id === id).length;
+    const limpo = await enviar({ tipo: 'descartar', idGravacao: id }); // com o armazem de volta, apaga
+    return { naMemoria: naMemoria.length, descartar: { ok: descartar.ok, motivo: descartar.motivo }, noArmazem, limpo, depois: await gravacoesNoArmazem() };
+  } finally {
+    falhasIdb.pedacoUmaVez = false;
+    falhasIdb.substituir = 0;
+    falhasIdb.tudo = false;
+    Object.assign(offscreen.AJUSTES, AJUSTES_DE_PRODUCAO);
+  }
 }
 
 // Descartar gravacao que esta SO no armazem, com o armazem quebrado: erro de verdade, e ela fica.
@@ -731,6 +794,8 @@ window.rodarCenarios = async () => ({
   buracoMemoriaRetentativa: await buracoMemoriaRetentativa(),
   marcarFalhaMantemCopia: await marcarFalhaMantemCopia(),
   descartarSoArmazemQuebrado: await descartarSoArmazemQuebrado(),
+  copiaInteiraTrocaFalharia: await copiaInteiraTrocaFalharia(),
+  descartarMemoriaComCopiaQuebrado: await descartarMemoriaComCopiaQuebrado(),
 });
 
 window.paginaPronta = true;

@@ -255,21 +255,24 @@ async function pararESalvar() {
     s.mixer.desmontar();
     s.ctx.close().catch(() => {});
   }
-  try {
-    await (await armazem()).marcar(s.id, 'salvando');
-  } catch {
-    // marcar e so informativo (recuperacao usa a marca para o nome); o arquivo ja esta na memoria
+  // Copia com buraco (alguma fatia nao entrou no armazem): fica "gravando" — se o Chrome fechar antes
+  // de salvar, sai com _recuperada (pode estar incompleta). Sem escrita nova no armazem que acabou de
+  // falhar: o registro ja nasceu "gravando" (5a rodada de revisao, 09/11/2026).
+  if (!s.gravador.erroArmazem) {
+    try {
+      await (await armazem()).marcar(s.id, 'salvando');
+    } catch {
+      // marcar e so informativo (recuperacao usa a marca para o nome); o arquivo ja esta na memoria
+    }
   }
-  // copiaIncompleta: alguma fatia nao entrou no armazem (buraco na copia de seguranca).
-  const copiaIncompleta = Boolean(s.gravador.erroArmazem);
-  return entregar(s.id, { nome: s.meta.nome, origem: s.meta.origem, inicio: s.meta.inicio, copiaIncompleta }, arquivo);
+  return entregar(s.id, { nome: s.meta.nome, origem: s.meta.origem, inicio: s.meta.inicio }, arquivo);
 }
 
 // Entrega o arquivo ao service worker, que salva em Downloads e depois avisa 'salvo' ou 'falhou-salvar'.
 // O arquivo fica guardado em 'entregas' ate o fim: se o salvamento falhar, ainda da para guarda-lo.
 async function entregar(idGravacao, meta, arquivo) {
   const url = URL.createObjectURL(arquivo);
-  entregas.set(idGravacao, { url, arquivo, nome: meta.nome, origem: meta.origem, inicio: meta.inicio, copiaIncompleta: Boolean(meta.copiaIncompleta) });
+  entregas.set(idGravacao, { url, arquivo, nome: meta.nome, origem: meta.origem, inicio: meta.inicio });
   let r;
   try {
     r = await avisarSw('arquivo-pronto', { idGravacao, url, nome: meta.nome });
@@ -284,33 +287,38 @@ async function entregar(idGravacao, meta, arquivo) {
 }
 
 // Onde fica uma gravacao que NAO foi salva. Devolve 'armazem', 'memoria' ou 'nenhuma'.
-// - ja estava no armazem e o arquivo esta na mao: o arquivo SEMPRE substitui os pedacos (numa
-//   transacao so). Ele e sempre o melhor que existe: inteiro (veio da memoria do gravador) ou igual
-//   a copia (veio dela, na recuperacao). 4a rodada de revisao, 09/11/2026: decidir pela marca
-//   copiaIncompleta perdia a marca na segunda tentativa e o inteiro era descartado. Se a troca falhar,
-//   a copia antiga fica, o inteiro vai para a memoria e a copia furada e marcada "gravando" (ganha
-//   _recuperada se o Chrome fechar antes de salvar);
+// - ja estava no armazem e o arquivo esta na mao: se a soma dos pedacos difere do arquivo, a copia
+//   tem buraco e o arquivo (inteiro) substitui os pedacos numa transacao so; se a soma bate, a copia
+//   ja esta inteira e nao se troca nada. O TAMANHO decide, e ele nao se perde entre tentativas
+//   (4a rodada: a marca copiaIncompleta se perdia; 5a rodada: trocar sempre fazia uma troca falha
+//   dizer "so na memoria" com a copia inteira no armazem). Se a troca falhar, a copia furada fica e
+//   o inteiro vai para a memoria;
 // - ja estava no armazem, sem arquivo na mao: fica la (mantem "gravando" quando ja era);
 // - nunca foi registrada (gravou sem copia de seguranca): tenta guardar no armazem AGORA (ele pode
 //   ter voltado); se nao der, fica na memoria.
+// comCopia (na memoria): ha tambem um registro desta gravacao no armazem — o Descartar tem de apaga-lo.
 async function guardarNaoSalva(id, entrega) {
-  const paraMemoria = () => {
-    naMemoria.set(id, { arquivo: entrega.arquivo, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio });
+  const paraMemoria = (comCopia) => {
+    naMemoria.set(id, { arquivo: entrega.arquivo, nome: entrega.nome, origem: entrega.origem, inicio: entrega.inicio, comCopia });
     return 'memoria';
   };
   let banco = null;
   let registrou = false;
+  let existia = false;
   try {
     banco = await armazem();
     const g = await banco.lerGravacao(id);
     if (g) {
+      existia = true;
       if (entrega) {
-        try {
-          await banco.substituirPedacos(id, entrega.arquivo);
-        } catch (e) {
-          console.error('Gravador: a copia nao pode ser trocada pelo arquivo inteiro; ele fica na memoria', e);
-          if (entrega.copiaIncompleta && g.situacao !== 'gravando') await banco.marcar(id, 'gravando').catch(() => {});
-          return paraMemoria();
+        const bytesNaCopia = (await banco.lerPedacos(id)).reduce((soma, b) => soma + b.size, 0);
+        if (bytesNaCopia !== entrega.arquivo.size) {
+          try {
+            await banco.substituirPedacos(id, entrega.arquivo);
+          } catch (e) {
+            console.error('Gravador: a copia furada nao pode ser trocada pelo arquivo inteiro; ele fica na memoria', e);
+            return paraMemoria(true);
+          }
         }
       }
       if (g.situacao !== 'gravando') await banco.marcar(id, 'pendente');
@@ -322,11 +330,13 @@ async function guardarNaoSalva(id, entrega) {
     await banco.guardarPedaco(id, 0, entrega.arquivo);
     return 'armazem';
   } catch (e) {
-    console.error('Gravador: nao coube no armazem, fica na memoria', e);
+    console.error('Gravador: falha no armazem ao guardar a nao salva', e);
     // Nao deixa registro sem audio (senao a mesma gravacao apareceria duas vezes na lista).
     if (registrou) await banco.apagarGravacao(id).catch(() => {});
-    if (!entrega) return 'nenhuma';
-    return paraMemoria();
+    // Arquivo na mao: guarda na memoria tambem (nao da para saber se a copia esta inteira).
+    if (entrega) return paraMemoria(existia);
+    // Sem arquivo, mas o registro existia: a copia esta no armazem (5a rodada: antes dizia "perdida").
+    return existia ? 'armazem' : 'nenhuma';
   }
 }
 
@@ -411,11 +421,15 @@ async function recuperar(idGravacao) {
 // quebrado, o item sumia e a janelinha dizia "Algo deu errado").
 async function descartar(idGravacao) {
   if ((sessao && sessao.id === idGravacao) || entregas.has(idGravacao)) return { ok: false, motivo: 'em-andamento' };
-  const estavaNaMemoria = naMemoria.delete(idGravacao);
+  const daMemoria = naMemoria.get(idGravacao);
+  naMemoria.delete(idGravacao);
   try {
     await (await armazem()).apagarGravacao(idGravacao);
   } catch (e) {
-    if (!estavaNaMemoria) throw e; // so estava no armazem e ele falhou: e erro de verdade
+    // Erro de verdade quando havia (ou podia haver) copia no armazem: so estava la, ou estava na
+    // memoria E no armazem. Dizer "ok" deixaria a gravacao de cliente que o usuario mandou apagar
+    // voltar na lista (5a rodada de revisao, 09/11/2026).
+    if (!daMemoria || daMemoria.comCopia) throw e;
   }
   await verificarSeTudoSalvo();
   return { ok: true };

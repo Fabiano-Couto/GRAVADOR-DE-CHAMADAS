@@ -82,9 +82,11 @@ node ferramentas/instalar.js
 
 Isso copia a pasta `extensao\` para `C:\Extensoes\Gravador de Chamadas` e confere a cópia arquivo por
 arquivo. Outro destino: `node ferramentas/instalar.js "D:\Minhas Extensoes\Gravador"`.
-O instalador se recusa a gravar dentro de pasta sincronizada (Google Drive, OneDrive, Dropbox, iCloud)
-ou de um repositório git, e a apagar uma pasta que não seja uma instalação anterior do Gravador. Ele
-copia para uma pasta temporária, confere e só então troca a instalação anterior.
+O instalador se recusa a gravar dentro de pasta sincronizada — reconhecida **pelo nome** (Meu Drive,
+OneDrive, Dropbox, iCloud Drive; uma pasta sincronizada com outro nome passa, confira você) — ou de um
+repositório git, e a apagar uma pasta que não seja uma instalação anterior do Gravador. Ele copia para
+uma pasta temporária, confere e troca por renomeação: se algo falhar na troca, a instalação anterior
+continua (ou volta) no lugar.
 
 > Em `C:\Extensoes`, outras contas do Windows conseguem alterar os arquivos. Se o computador tem outros
 > usuários, prefira uma pasta só sua, por exemplo
@@ -269,9 +271,9 @@ computador**:
   estatística nem atualização automática. Além disso, a política de segurança dela
   (`content_security_policy`) faz o **próprio Chrome bloquear** `fetch`, XHR, WebSocket, EventSource,
   `sendBeacon`, script vindo de fora e `eval` em todas as páginas da extensão. Essa política não cobre
-  tudo (WebRTC, abrir aba com endereço de fora, download de endereço remoto); para isso, os testes do
-  projeto têm um alarme que procura essas formas no código, e o salvamento só aceita arquivo criado
-  pela própria extensão.
+  tudo (WebRTC, abrir aba com endereço de fora, download de endereço remoto): os testes do projeto têm
+  um alarme que pega WebRTC e endereço de internet escrito no código, e o salvamento só aceita arquivo
+  criado pela própria extensão.
 - **Sem acesso a sites:** a extensão **não** lê o conteúdo do WhatsApp, do Meet ou de qualquer página —
   não tem permissão de site nem script injetado. Ela só recebe o **som** da aba que você mandou gravar,
   e só depois do seu clique ou atalho (regra do próprio Chrome).

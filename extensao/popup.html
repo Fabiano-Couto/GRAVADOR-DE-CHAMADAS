@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Gravador de Chamadas</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main class="painel">
+  <header class="topo">
+    <span class="marca" aria-hidden="true"></span>
+    <h1>Gravador de Chamadas</h1>
+  </header>
+
+  <section class="situacao" aria-live="polite">
+    <p class="linha-estado"><span class="ponto" id="ponto"></span><span id="texto-estado">Carregando...</span></p>
+    <p class="cronometro" id="cronometro" hidden>00:00:00</p>
+  </section>
+
+  <section class="medidores" id="medidores" hidden aria-label="Volume de cada lado da chamada">
+    <div class="medidor">
+      <span class="rotulo">Você</span>
+      <div class="barra"><div class="nivel" id="nivel-voce"></div></div>
+    </div>
+    <div class="medidor">
+      <span class="rotulo">Cliente</span>
+      <div class="barra"><div class="nivel" id="nivel-cliente"></div></div>
+    </div>
+  </section>
+
+  <p class="aviso" id="aviso" role="status" hidden></p>
+
+  <button class="botao principal" id="botao" type="button" disabled>Gravar esta aba</button>
+
+  <section class="recuperar" id="recuperar" hidden>
+    <h2>Gravações não salvas</h2>
+    <ul id="lista-recuperar"></ul>
+  </section>
+
+  <footer class="rodape">
+    <p class="ultima" id="ultima" hidden></p>
+    <p class="linha-rodape">
+      <span>Atalho: <kbd id="atalho">Alt+Shift+G</kbd></span>
+      <button class="link" id="abrir-pasta" type="button">Abrir Downloads</button>
+    </p>
+  </footer>
+</main>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

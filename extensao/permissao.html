@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gravador de Chamadas: permitir o microfone</title>
+<link rel="stylesheet" href="popup.css">
+<style>
+  body { width: auto; min-height: 100vh; display: grid; place-items: start center; padding: 48px 16px; }
+  .cartao { max-width: 520px; display: grid; gap: 14px; padding: 24px; border: 1px solid var(--borda); border-radius: 12px; background: var(--fundo); }
+  .cartao h1 { font-size: 20px; }
+  .cartao p { margin: 0; }
+  .cartao .botao.principal { width: auto; justify-self: start; padding: 10px 18px; }
+  .ok { color: var(--verde); font-weight: 600; }
+</style>
+</head>
+<body>
+<main class="cartao">
+  <header class="topo">
+    <span class="marca" aria-hidden="true"></span>
+    <h1>Permitir o microfone</h1>
+  </header>
+  <p>O Gravador de Chamadas usa o microfone para gravar a <strong>sua voz</strong> junto com a do cliente. O Chrome pergunta uma vez só; depois disso a gravação começa direto, sem perguntar de novo.</p>
+  <p>O áudio fica só no seu computador, na pasta Downloads. A extensão não envia nada pela internet.</p>
+  <button class="botao principal" id="permitir" type="button">Permitir microfone</button>
+  <p id="resultado" role="status" aria-live="polite"></p>
+</main>
+<script type="module" src="permissao.js"></script>
+</body>
+</html>

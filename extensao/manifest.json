@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Gravador de Chamadas",
+  "version": "1.0.0",
+  "description": "Grava o áudio de chamadas do WhatsApp Web e do Google Meet: a sua voz e a do cliente, em canais separados.",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "tabCapture", "offscreen", "downloads", "storage"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Gravador de Chamadas",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icones/icone-16.png",
+      "48": "icones/icone-48.png",
+      "128": "icones/icone-128.png"
+    }
+  },
+  "icons": {
+    "16": "icones/icone-16.png",
+    "48": "icones/icone-48.png",
+    "128": "icones/icone-128.png"
+  },
+  "commands": {
+    "alternar-gravacao": {
+      "suggested_key": { "default": "Alt+Shift+G" },
+      "description": "Iniciar ou parar a gravação da aba atual"
+    }
+  }
+}

@@ -1,0 +1,286 @@
+:root {
+  --fundo: #ffffff;
+  --superficie: #f4f5f7;
+  --texto: #1f2328;
+  --texto-suave: #59636e;
+  --borda: #d8dee4;
+  --vermelho: #d93025;
+  --vermelho-forte: #b3261e;
+  --vermelho-texto: #ffffff;
+  --ambar-texto: #8a4b00;
+  --ambar-fundo: #fff4e0;
+  --erro-texto: #a1260d;
+  --erro-fundo: #fdecea;
+  --verde: #1a7f37;
+  --trilho: #e3e7eb;
+  --foco: #0b57d0;
+  --raio: 8px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #1e1f22;
+    --superficie: #2a2c30;
+    --texto: #e8eaed;
+    --texto-suave: #a8adb4;
+    --borda: #3c4045;
+    --vermelho: #ee675c;
+    --vermelho-forte: #f28b82;
+    --vermelho-texto: #1e1f22;
+    --ambar-texto: #fdd663;
+    --ambar-fundo: #3a3020;
+    --erro-texto: #f6aea9;
+    --erro-fundo: #3c2523;
+    --verde: #5bb974;
+    --trilho: #3c4045;
+    --foco: #8ab4f8;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 14px/1.4 system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+.painel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 12px;
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.marca {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--vermelho);
+  box-shadow: inset 0 0 0 3px var(--fundo), 0 0 0 1.5px var(--vermelho);
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.situacao p {
+  margin: 0;
+}
+
+.linha-estado {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ponto {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--texto-suave);
+}
+
+.ponto.gravando {
+  background: var(--vermelho);
+  animation: pulsar 1.2s ease-in-out infinite;
+}
+
+@keyframes pulsar {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ponto.gravando {
+    animation: none;
+  }
+}
+
+.cronometro {
+  margin-top: 4px !important;
+  font-size: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+
+.medidores {
+  display: grid;
+  gap: 6px;
+}
+
+.medidor {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.rotulo {
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+
+.barra {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--trilho);
+  overflow: hidden;
+}
+
+.nivel {
+  width: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--verde);
+  transition: width 0.12s linear;
+}
+
+.aviso {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--raio);
+  background: var(--ambar-fundo);
+  color: var(--ambar-texto);
+  font-size: 13px;
+}
+
+.aviso.erro {
+  background: var(--erro-fundo);
+  color: var(--erro-texto);
+}
+
+.botao {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--raio);
+  border: 1px solid var(--borda);
+  background: var(--superficie);
+  color: var(--texto);
+  padding: 6px 10px;
+}
+
+.botao.principal {
+  width: 100%;
+  padding: 10px 12px;
+  font-weight: 600;
+  border-color: var(--vermelho);
+  background: var(--vermelho);
+  color: var(--vermelho-texto);
+}
+
+.botao.principal:hover:not(:disabled) {
+  background: var(--vermelho-forte);
+  border-color: var(--vermelho-forte);
+}
+
+.botao.principal.parar {
+  background: var(--texto);
+  border-color: var(--texto);
+  color: var(--fundo);
+}
+
+.botao:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.botao:focus-visible,
+.link:focus-visible {
+  outline: 2px solid var(--foco);
+  outline-offset: 2px;
+}
+
+.recuperar {
+  padding: 10px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+}
+
+.recuperar ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.recuperar li {
+  display: grid;
+  gap: 4px;
+}
+
+.recuperar .descricao {
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+
+.recuperar .acoes {
+  display: flex;
+  gap: 6px;
+}
+
+.rodape {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--borda);
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+
+.rodape p {
+  margin: 0;
+}
+
+.linha-rodape {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.ultima {
+  overflow-wrap: anywhere;
+}
+
+kbd {
+  font: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  background: var(--superficie);
+}
+
+.link {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--foco);
+  cursor: pointer;
+  text-decoration: underline;
+}

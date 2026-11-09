@@ -94,7 +94,14 @@ async function esperarPorta(pastaPerfil, limiteMs) {
   const fim = Date.now() + limiteMs;
   while (Date.now() < fim) {
     if (existsSync(arquivo)) {
-      const porta = readFileSync(arquivo, 'utf8').split('\n')[0].trim();
+      // O Chrome pode estar escrevendo o arquivo neste instante: no Windows a leitura falha com
+      // EBUSY (visto em 09/11/2026 com a suite em paralelo). Tenta de novo na proxima volta.
+      let porta = '';
+      try {
+        porta = readFileSync(arquivo, 'utf8').split('\n')[0].trim();
+      } catch (e) {
+        if (e.code !== 'EBUSY' && e.code !== 'EPERM') throw e;
+      }
       if (porta) return porta;
     }
     await espera(100);

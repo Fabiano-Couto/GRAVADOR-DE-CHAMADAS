@@ -18,7 +18,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ferramentaQueFalta, iniciarAmbiente } from './ambiente-chrome.js';
-import { sondar, decodificar, amplitude } from './analise-audio.js';
+import { sondar, decodificar, amplitude, duracaoS } from './analise-audio.js';
 
 const falta = ferramentaQueFalta();
 const opcoes = { skip: falta || false, timeout: 90000 };
@@ -78,6 +78,10 @@ test('offscreen: medidores medem cada lado durante a gravacao', opcoes, () => {
   assert.ok(n.cliente > 0.25 && n.cliente < 0.35, 'cliente: ' + n.cliente);
 });
 
+// Mede no ULTIMO segundo do arquivo. Com a maquina ocupada (suite em paralelo), o microfone falso
+// do teste (criado por ultimo, noutro contexto de audio) comecou a soar tarde: medido em
+// 09/11/2026, voz 0,11986 na janela fixa de 0,75 s contra 0,30 normal, e uma falha da suite. O
+// fim do arquivo ja esta em regime.
 test('offscreen: arquivo entregue tem a voce so na esquerda e o cliente so na direita', opcoes, () => {
   const arquivo = path.join(pasta, 'offscreen.m4a');
   writeFileSync(arquivo, Buffer.from(c.fluxoCompleto.arquivo, 'base64'));
@@ -85,10 +89,13 @@ test('offscreen: arquivo entregue tem a voce so na esquerda e o cliente so na di
   assert.equal(info.codec, 'aac');
   assert.equal(info.canais, 2);
   const [esquerdo, direito] = decodificar(arquivo, 2);
-  assert.ok(amplitude(esquerdo, 440, 0.75) > PRESENTE, 'voce ausente na esquerda');
-  assert.ok(amplitude(esquerdo, 1000, 0.75) < AUSENTE, 'cliente vazando na esquerda');
-  assert.ok(amplitude(direito, 1000, 0.75) > PRESENTE, 'cliente ausente na direita');
-  assert.ok(amplitude(direito, 440, 0.75) < AUSENTE, 'voce vazando na direita');
+  const inicioDaJanela = duracaoS(esquerdo) - 1.1;
+  assert.ok(inicioDaJanela >= 1, 'arquivo curto demais: ' + duracaoS(esquerdo) + ' s');
+  const medir = (canal, freq) => amplitude(canal, freq, inicioDaJanela);
+  assert.ok(medir(esquerdo, 440) > PRESENTE, 'voce ausente na esquerda: ' + medir(esquerdo, 440));
+  assert.ok(medir(esquerdo, 1000) < AUSENTE, 'cliente vazando na esquerda: ' + medir(esquerdo, 1000));
+  assert.ok(medir(direito, 1000) > PRESENTE, 'cliente ausente na direita: ' + medir(direito, 1000));
+  assert.ok(medir(direito, 440) < AUSENTE, 'voce vazando na direita: ' + medir(direito, 440));
 });
 
 test('offscreen: aba fechada durante o inicio recusa e volta para parado sem sobra', opcoes, () => {

@@ -142,7 +142,7 @@ async function fluxoCompleto() {
   arquivoRecebido = null;
   paraSw = [];
   const inicio = await enviar(PEDIDO);
-  await espera(2500);
+  await espera(3500);
   const gravando = resumoEstado(await enviar({ tipo: 'estado' }));
   const trilhasGravando = trilhas();
   const parar = await enviar({ tipo: 'parar' });

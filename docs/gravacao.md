@@ -35,7 +35,9 @@ automática quando a chamada começa) só depois da validação desta; ver o pla
    - no armazém, marcada `pendente`. Se a soma dos pedaços difere do arquivo que está na mão (cópia
      com buraco), os pedaços são trocados por ele numa transação só e a gravação passa a `pendente`
      (a cópia agora está inteira: nome original, sem `_recuperada`); se a soma bate, nada é trocado.
-     Cópia inteira em que só a marca falha continua no armazém (fica `salvando`, nome original);
+     Cópia inteira em que só a marca falha continua no armazém, como estava: `salvando` (nome
+     original) ou `gravando`, se uma marca anterior também falhou — aí sai com `_recuperada` sem estar
+     incompleta (só o nome erra; aceito na 7ª rodada de revisão);
    - se o armazém não funciona ou a troca falha, **na memória** do offscreen ("só até fechar o
      Chrome"). Uma cópia com buraco nunca é marcada `salvando`: fica `gravando` desde o Parar, e por
      isso ganha `_recuperada` se o Chrome fechar antes de salvar (antes da troca). A memória lembra se

@@ -173,7 +173,11 @@ test('guarda: todo motivo de erro usado no codigo tem mensagem para o usuario', 
 });
 
 test('guarda: todo link dos documentos aponta para um caminho que existe', () => {
-  const documentos = [path.join(RAIZ, 'CLAUDE.md'), ...listar(DOCS).filter((f) => f.endsWith('.md') && !rel(f).startsWith('docs/_modelos/'))];
+  const documentos = [
+    path.join(RAIZ, 'CLAUDE.md'),
+    path.join(RAIZ, 'README.md'),
+    ...listar(DOCS).filter((f) => f.endsWith('.md') && !rel(f).startsWith('docs/_modelos/')),
+  ];
   const mortos = [];
   for (const doc of documentos) {
     for (const [, alvo] of texto(doc).matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {

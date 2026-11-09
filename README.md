@@ -29,6 +29,7 @@ Feita para quem atende clientes por chamada e precisa rever depois, com calma, t
 - [Solução de problemas](#solução-de-problemas)
 - [Para desenvolvedores](#para-desenvolvedores)
 - [Próximos passos](#próximos-passos)
+- [Licença](#licença)
 
 ---
 
@@ -45,8 +46,9 @@ Feita para quem atende clientes por chamada e precisa rever depois, com calma, t
   ser recuperado depois.
 - **Avisa quando algo está errado:** microfone mudo, aba gravada sem som, cópia de segurança falhando,
   gravação que não foi salva.
-- **Nada vai para a internet:** sem servidor, sem conta, sem análise de uso. O próprio Chrome bloqueia
-  qualquer conexão da extensão.
+- **Nada vai para a internet:** sem servidor, sem conta, sem análise de uso. A política de segurança
+  da extensão faz o próprio Chrome bloquear as conexões de rede dela (veja
+  [Privacidade e segurança](#privacidade-e-segurança)).
 
 ## Requisitos
 
@@ -80,8 +82,13 @@ node ferramentas/instalar.js
 
 Isso copia a pasta `extensao\` para `C:\Extensoes\Gravador de Chamadas` e confere a cópia arquivo por
 arquivo. Outro destino: `node ferramentas/instalar.js "D:\Minhas Extensoes\Gravador"`.
-O instalador se recusa a gravar dentro do Google Drive e a apagar uma pasta que não seja uma instalação
-anterior do Gravador.
+O instalador se recusa a gravar dentro de pasta sincronizada (Google Drive, OneDrive, Dropbox, iCloud)
+ou de um repositório git, e a apagar uma pasta que não seja uma instalação anterior do Gravador. Ele
+copia para uma pasta temporária, confere e só então troca a instalação anterior.
+
+> Em `C:\Extensoes`, outras contas do Windows conseguem alterar os arquivos. Se o computador tem outros
+> usuários, prefira uma pasta só sua, por exemplo
+> `node ferramentas/instalar.js "%LOCALAPPDATA%\Extensoes\Gravador de Chamadas"`.
 
 Sem Node.js: copie a pasta `extensao\` à mão para uma pasta local de sua escolha.
 
@@ -230,7 +237,9 @@ Perda máxima num travamento: **cerca de 10 segundos** finais. **Descartar** ped
 apaga de vez.
 
 Se um salvamento falhar (disco cheio, antivírus, pasta bloqueada), a gravação também fica nessa lista,
-e o ícone mostra **!** até você abrir a janelinha.
+e o ícone mostra **!** **até não sobrar nada por salvar**. Se, além disso, a cópia de segurança interna
+não estiver funcionando, a gravação fica guardada **só na memória**: aparece na lista como "só até
+fechar o Chrome" — salve antes de fechar o navegador.
 
 ---
 
@@ -244,8 +253,10 @@ A gravação **continua**; o ícone fica com **!** e a janelinha explica:
 | **Nenhum som vem da aba gravada** | 30 s de silêncio absoluto na aba | a chamada pode estar noutra janela/aba: pare e grave a certa. Se só ninguém está falando, ignore |
 | **Cópia de segurança não está funcionando** | o armazenamento interno falhou | a gravação continua e é salva ao parar, mas não pode ser recuperada se o Chrome fechar no meio |
 
-E, mesmo com a janelinha fechada, o ícone fica com **!** se uma gravação **não foi salva** ou se a
-gravação **parou sozinha** por um erro do Chrome (o que foi gravado até ali é salvo).
+E, mesmo com a janelinha fechada, o ícone fica com **!** se uma gravação **não foi salva** (até você
+salvá-la pela lista) ou se a gravação **parou sozinha** por um erro do Chrome (o que foi gravado até
+ali é mandado para Downloads; esse aviso some quando você abre a janelinha). Um aviso não apaga o
+outro: a janelinha mostra todos.
 
 ---
 
@@ -254,9 +265,13 @@ gravação **parou sozinha** por um erro do Chrome (o que foi gravado até ali �
 Gravações de chamada têm voz e dados de terceiros. A extensão foi feita para que **nada saia do seu
 computador**:
 
-- **Sem rede:** a política de segurança da extensão (`content_security_policy` com `connect-src 'none'`)
-  faz o próprio Chrome bloquear qualquer conexão das páginas da extensão. Não há servidor, conta,
-  estatística ou atualização automática.
+- **Sem rede:** a extensão não tem nenhum código que fale com a internet — não há servidor, conta,
+  estatística nem atualização automática. Além disso, a política de segurança dela
+  (`content_security_policy`) faz o **próprio Chrome bloquear** `fetch`, XHR, WebSocket, EventSource,
+  `sendBeacon`, script vindo de fora e `eval` em todas as páginas da extensão. Essa política não cobre
+  tudo (WebRTC, abrir aba com endereço de fora, download de endereço remoto); para isso, os testes do
+  projeto têm um alarme que procura essas formas no código, e o salvamento só aceita arquivo criado
+  pela própria extensão.
 - **Sem acesso a sites:** a extensão **não** lê o conteúdo do WhatsApp, do Meet ou de qualquer página —
   não tem permissão de site nem script injetado. Ela só recebe o **som** da aba que você mandou gravar,
   e só depois do seu clique ou atalho (regra do próprio Chrome).
@@ -364,3 +379,8 @@ Documentação técnica: [docs/gravacao.md](docs/gravacao.md) (como tudo funcion
 - **Transcrição** com "Você:" e "Cliente:", aproveitando os canais separados.
 - Nome do contato do WhatsApp no nome do arquivo.
 - Acompanhar o mudo da chamada.
+
+## Licença
+
+[MIT](LICENSE) — pode usar, copiar, modificar e distribuir, mantendo o aviso de copyright e a licença.
+Sem garantia de nenhum tipo.

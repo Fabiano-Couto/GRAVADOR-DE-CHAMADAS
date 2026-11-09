@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { instalar } from '../../ferramentas/instalar.js';
+import { instalar, impressao } from '../../ferramentas/instalar.js';
 
 let base;
 let origem;
@@ -52,6 +52,23 @@ test('instalar: recusa apagar uma pasta que nao e uma instalacao do Gravador, e 
 test('instalar: recusa destino dentro do Google Drive', () => {
   assert.throws(() => instalar({ origem, destino: path.join(base, 'Meu Drive', 'Gravador') }), /dentro do Google Drive/);
   assert.throws(() => instalar({ origem, destino: path.join(base, 'My Drive', 'Gravador') }), /dentro do Google Drive/);
+});
+
+// Defeito de 09/11/2026 (primeira instalacao real, do Drive para o C:): a conferencia comparava na
+// ordem em que cada disco lista a pasta, e o Drive lista diferente. A impressao sai ordenada pelo
+// caminho, nao importa a ordem em que os arquivos foram criados.
+// O NTFS lista sem diferenciar maiuscula (a.js antes de B.js); a ordem pelo codigo do caractere poe
+// B.js antes. Se a impressao dependesse da ordem do disco, este teste cairia.
+test('instalar: a conferencia nao depende da ordem em que o disco lista os arquivos', () => {
+  const outra = path.join(base, 'outra');
+  mkdirSync(path.join(outra, 'lib'), { recursive: true });
+  writeFileSync(path.join(outra, 'a.js'), '1\n');
+  writeFileSync(path.join(outra, 'B.js'), '2\n');
+  writeFileSync(path.join(outra, 'lib', 'c.js'), '3\n');
+  assert.deepEqual(
+    impressao(outra).map(([caminho]) => caminho),
+    ['B.js', 'a.js', 'lib/c.js'],
+  );
 });
 
 test('instalar: recusa destino dentro da propria pasta da extensao', () => {

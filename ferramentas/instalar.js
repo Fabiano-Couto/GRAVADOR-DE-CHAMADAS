@@ -30,14 +30,16 @@ function listar(pasta) {
   return saida;
 }
 
-// Mapa "caminho relativo -> sha256" de uma pasta, sem o lixo do sistema.
-function impressao(pasta) {
-  const mapa = {};
-  for (const arquivo of listar(pasta)) {
-    const relativo = path.relative(pasta, arquivo).split(path.sep).join('/');
-    mapa[relativo] = createHash('sha256').update(readFileSync(arquivo)).digest('hex');
-  }
-  return mapa;
+// Lista "caminho relativo -> sha256" de uma pasta, sem o lixo do sistema, ORDENADA pelo caminho.
+// (Defeito de 09/11/2026, na primeira instalacao real: o Google Drive lista a pasta numa ordem e o
+// disco C: em outra; comparar sem ordenar dizia "a copia nao bateu" com o conteudo igual.)
+export function impressao(pasta) {
+  return listar(pasta)
+    .map((arquivo) => [
+      path.relative(pasta, arquivo).split(path.sep).join('/'),
+      createHash('sha256').update(readFileSync(arquivo)).digest('hex'),
+    ])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 function dentroDoGoogleDrive(caminho) {
@@ -72,7 +74,7 @@ export function instalar({ origem, destino }) {
   const noDestino = impressao(alvo);
   if (JSON.stringify(deOrigem) !== JSON.stringify(noDestino)) throw new Error('a copia nao bateu com a origem');
   const assinatura = createHash('sha256').update(JSON.stringify(noDestino)).digest('hex').slice(0, 12);
-  return { destino: alvo, arquivos: Object.keys(noDestino).length, assinatura };
+  return { destino: alvo, arquivos: noDestino.length, assinatura };
 }
 
 // ---------- linha de comando ----------

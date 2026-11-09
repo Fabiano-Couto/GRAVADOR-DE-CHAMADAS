@@ -134,6 +134,10 @@ export async function iniciarAmbiente(paginaRelativa = '/testes/audio/pagina-tes
       '--no-default-browser-check',
       '--disable-extensions',
       '--autoplay-policy=no-user-gesture-required',
+      // Mudo: o tom de 1 kHz do "cliente" falso vai para o alto-falante (o mixer devolve a aba de
+      // proposito) e apitava no fone do usuario a cada teste (09/11/2026). O alto-falante e medido
+      // pelo monitor dentro da pagina, nao pelo som real — o mudo nao cega o teste.
+      '--mute-audio',
       '--remote-debugging-port=0',
       '--user-data-dir=' + pastaPerfil,
       'about:blank',

@@ -1,0 +1,10 @@
+{
+  "name": "gravador-de-chamadas",
+  "private": true,
+  "description": "Extensao do Chrome que grava chamadas do WhatsApp Web e do Meet. Sem dependencias: o package.json existe so para os modulos ES e os atalhos de comando.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"testes/**/*.test.js\"",
+    "smoke": "node ferramentas/smoke.js"
+  }
+}

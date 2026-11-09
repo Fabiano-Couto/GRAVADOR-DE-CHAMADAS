@@ -1,0 +1,87 @@
+# .gitignore - base do metodo (alinhada com a conferencia de segredos da code-guardian).
+# Juntar com o .gitignore padrao da stack (Laravel, Node, Python...).
+# O BLOCO DE SEGREDOS NAO PERDE NENHUMA LINHA. O resto (dependencias, builds, editor) se ajusta a
+# stack, com OK do usuario: ha projeto que versiona vendor/, dist/ ou .vscode/settings.json.
+# Arquivo que precisa ser versionado mesmo casando com uma regra de segredo (ex.: .env.testing sem
+# segredo real): liberar com "!" e marcar "segredo-ok" numa das 5 primeiras linhas dele.
+
+# ===== SEGREDOS (nao tirar nenhuma linha) =====
+# --- ambiente ---
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.dist
+!.env.template
+!.env.exemplo
+!.env.modelo
+.envrc
+
+# --- chaves, certificados, credenciais ---
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+*.kdbx
+*.age
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+credentials.json
+service-account*.json
+client_secret*.json
+auth.json
+wp-config.php
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.htpasswd
+.netrc
+.pgpass
+.npmrc
+.pypirc
+.git-credentials
+
+# --- bancos, dumps e copias ---
+*.sql.gz
+*.dump
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+*dump*.sql
+*backup*.sql
+*backup*.zip
+
+# --- logs (podem carregar token e dado pessoal) ---
+*.log
+logs/
+storage/logs/
+# ===== fim do bloco de segredos =====
+
+# --- dependencias e builds (ajustar a stack, com OK) ---
+node_modules/
+vendor/
+dist/
+build/
+
+# --- editor e sistema ---
+.vscode/
+.idea/
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# --- deste projeto: gravacoes tem voz e dado de cliente, nunca vao para o git ---
+*.m4a
+*.mp4
+*.webm
+*.ogg
+*.opus
+*.wav
+*.mp3
